@@ -73,7 +73,7 @@ void InitThread() {
   using namespace crdeadzone;
   const std::wstring dir = DllDirectory();
   Logger::Instance().Init(dir);
-  Logger::Instance().Info("CRDeadzone v1.1.4 init (crloader)");
+  Logger::Instance().Info("CRDeadzone v1.2.0 init (crloader)");
 
   {  // Kill switch: drop an empty disabled.txt next to the DLL if a future
     // build ever misbehaves; the mod then logs and installs nothing.
@@ -87,6 +87,9 @@ void InitThread() {
   if (MH_Initialize() != MH_OK) {
     Logger::Instance().Error("MinHook init failed; hooks disabled");
   }
+
+  // Read-only recon first: catches option registration while it happens.
+  crdeadzone::InstallTunableCapture();
 
   g_config = new Config(PickIniPath(dir));
   LogSettings(g_config->Get());

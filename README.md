@@ -68,10 +68,13 @@ wins; the rest stand down automatically so input is never deadzoned twice):
    variant plus the undocumented ordinal-100 entry. Fires for any XInput
    polling path (wrappers, Steam virtual pads). The game's ordinal-2 import
    is resolved by name at runtime and logged, never assumed.
-5. **Game tunable discovery (read-only)** - locates the `deadZone`,
-   `slideDeadzone`, `stickInputPowerFactor`, and input-curve anchors in memory
-   and logs every referencing code site. Nothing is written; the log gives
-   exact anchors for validated patches in future versions.
+5. **Game tunable capture (read-only, v1.2.0+)** - clusters the call
+   targets in the anchor flow windows (the shared binder ranks above
+   per-name helpers) and hooks the top candidates with passthrough
+   detours. Bindings of `deadZone`, `slideDeadzone`,
+   `stickInputPowerFactor` and the input curves are logged with their
+   game-side addresses. Nothing is written; the log tells the next
+   version exactly where to apply your values, on every input path.
 
 Everything is signature/address based - no hardcoded offsets. If a game update
 moves things, the affected layer logs the miss and disables itself instead of
@@ -79,6 +82,9 @@ crashing. Attach `crmods/CRDeadzone/CRDeadzone.log` to bug reports.
 
 Recommended: turn Steam Input **off** for this game so the native path (and
 this mod) sees raw controller values instead of Steam-remapped ones.
+Note Steam Input applies its own deadzone *before* the game (and this mod)
+sees anything: with it on, lowering the inner deadzone below Steam's floor
+changes nothing, by design of Steam, not of this mod.
 
 ## Known limitations (v1.1.x)
 
