@@ -103,7 +103,7 @@ if(NOT CRDEADZONE_GAMEINPUT_INCLUDE STREQUAL "")
       CMAKE_FLAGS "-DINCLUDE_DIRECTORIES=${CRDEADZONE_GAMEINPUT_INCLUDE}"
       OUTPUT_VARIABLE CRDEADZONE_PROBE2_LOG)
     if(NOT CRDEADZONE_HAVE_GAMEINPUT_V2)
-      message(STATUS "GameInput v2 probe failed; v2 wrapping disabled")
+      message(STATUS "GameInput v2 probe failed; v2 wrapping disabled\n${CRDEADZONE_PROBE2_LOG}")
     endif()
   else()
     message(STATUS "GameInput headers present but v3 namespace unusable; wrapping disabled")

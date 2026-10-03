@@ -17,10 +17,6 @@
 #include "Logger.h"
 
 namespace crdeadzone {
-namespace {
-
-constexpr USAGE kPageDesktop = 0x01;
-constexpr USAGE kX = 0x30, kY = 0x31, kZ = 0x32, kRx = 0x33, kRy = 0x34, kRz = 0x35;
 
 struct DeviceEntry {
   HidMapping mapping;
@@ -28,6 +24,11 @@ struct DeviceEntry {
   bool ownsPpd = false;  // true: free(); false: HidD_FreePreparsedData
   bool logged = false;
 };
+
+namespace {
+
+constexpr USAGE kPageDesktop = 0x01;
+constexpr USAGE kX = 0x30, kY = 0x31, kZ = 0x32, kRx = 0x33, kRy = 0x34, kRz = 0x35;
 
 std::mutex g_mutex;
 std::unordered_map<HANDLE, DeviceEntry> g_devices;

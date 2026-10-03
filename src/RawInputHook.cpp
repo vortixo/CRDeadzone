@@ -6,6 +6,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <hidpi.h>
 #include <mutex>
 
 #include "Config.h"
