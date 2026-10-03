@@ -85,12 +85,12 @@ DeviceEntry* GetOrAddDevice(void* key, void* ppd, bool ownsPpd, unsigned collect
   e.ppd = preparsed;
   e.ownsPpd = ownsPpd;
   if (preparsed && (coll == 0x04 || coll == 0x05)) {
-    FindRange(ppd, kX, e.mapping.x);
-    FindRange(ppd, kY, e.mapping.y);
-    FindRange(ppd, kZ, e.mapping.z);
-    FindRange(ppd, kRx, e.mapping.rx);
-    FindRange(ppd, kRy, e.mapping.ry);
-    FindRange(ppd, kRz, e.mapping.rz);
+    FindRange(preparsed, kX, e.mapping.x);
+    FindRange(preparsed, kY, e.mapping.y);
+    FindRange(preparsed, kZ, e.mapping.z);
+    FindRange(preparsed, kRx, e.mapping.rx);
+    FindRange(preparsed, kRy, e.mapping.ry);
+    FindRange(preparsed, kRz, e.mapping.rz);
     const HidMapping decision = DecideMapping(
         e.mapping.x.present, e.mapping.y.present, e.mapping.z.present,
         e.mapping.rx.present, e.mapping.ry.present, e.mapping.rz.present);

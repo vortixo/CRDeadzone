@@ -7,7 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <hidusage.h>
-#include <hidpi.h>
+#include <hidsdi.h>
 #include <mutex>
 
 #include "Config.h"
