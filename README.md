@@ -108,9 +108,10 @@ Logic tests + descriptor validation (any platform with g++/python3):
 python3 tools/validate_menu.py deadzone.menu.json
 python3 tools/test_validate_menu.py
 g++ -std=c++20 -Wall -Wextra -Iinclude tests/test_main.cpp tests/test_deadzone_math.cpp \
-  tests/test_config.cpp tests/test_hid.cpp tests/test_support.cpp \
+  tests/test_config.cpp tests/test_hid.cpp tests/test_support.cpp tests/test_tunable.cpp \
   src/DeadzoneMath.cpp src/Config.cpp src/HidMapping.cpp src/Activity.cpp \
-  src/PatternScanner.cpp src/Logger.cpp src/Disasm.cpp -o /tmp/test_deadzone_math
+  src/PatternScanner.cpp src/Logger.cpp src/Disasm.cpp src/TunableCapture.cpp \
+  -o /tmp/test_deadzone_math
 /tmp/test_deadzone_math
 ```
 

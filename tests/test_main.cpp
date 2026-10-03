@@ -9,12 +9,14 @@ void DeadzoneMathTests();
 void ConfigTests();
 void HidTests();
 void SupportTests();
+void TunableTests();
 
 int main() {
   DeadzoneMathTests();
   ConfigTests();
   HidTests();
   SupportTests();
+  TunableTests();
   const auto& t = crtest::TotalsRef();
   if (t.failed == 0) {
     std::printf("ALL %d CHECKS PASSED\n", t.checks);
