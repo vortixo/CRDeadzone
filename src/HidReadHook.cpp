@@ -2,13 +2,12 @@
 
 #include <windows.h>
 
-#include <MinHook.h>
-
 #include <hidusage.h>
 #include <hidsdi.h>
 
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "Config.h"
@@ -22,16 +21,18 @@ const Config* g_config = nullptr;
 std::mutex g_mutex;
 bool g_installed = false;
 uint64_t g_liveLoggedMs = 0;
-std::unordered_set<HANDLE> g_hidHandles;
 
-using CreateFileWFn = HANDLE(WINAPI*)(LPCWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD,
-                                       DWORD, HANDLE);
+// Game-module IAT slots we patched (for restore).
+void** g_readFileSlot = nullptr;
+void* g_realReadFile = nullptr;
+void** g_closeHandleSlot = nullptr;
+void* g_realCloseHandle = nullptr;
+
+std::unordered_set<HANDLE> g_hidHandles;
+std::unordered_set<HANDLE> g_notHid;  // negative cache: ordinary files
+
 using ReadFileFn = BOOL(WINAPI*)(HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED);
 using CloseHandleFn = BOOL(WINAPI*)(HANDLE);
-
-CreateFileWFn g_realCreateFileW = nullptr;
-ReadFileFn g_realReadFile = nullptr;
-CloseHandleFn g_realCloseHandle = nullptr;
 
 uint64_t NowMs() {
   LARGE_INTEGER f, c;
@@ -40,48 +41,82 @@ uint64_t NowMs() {
   return static_cast<uint64_t>(c.QuadPart * 1000 / f.QuadPart);
 }
 
-bool IsHidPath(LPCWSTR name) {
-  if (!name) return false;
-  std::wstring s(name);
-  for (auto& ch : s) ch = static_cast<wchar_t>(towlower(ch));
-  return s.find(L"hid#") != std::wstring::npos || s.find(L"hid\\") != std::wstring::npos;
+bool SameName(const char* a, const char* b) {
+  while (*a && *b) {
+    char ca = *a++, cb = *b++;
+    if (ca >= 'A' && ca <= 'Z') ca += 'a' - 'A';
+    if (cb >= 'A' && cb <= 'Z') cb += 'a' - 'A';
+    if (ca != cb) return false;
+  }
+  return *a == *b;
 }
 
-HANDLE WINAPI DetourCreateFileW(LPCWSTR name, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES sa,
-                                 DWORD disp, DWORD flags, HANDLE tmpl) {
-  HANDLE h = g_realCreateFileW(name, access, share, sa, disp, flags, tmpl);
-  if (h != INVALID_HANDLE_VALUE && IsHidPath(name)) {
-    // Cheap verify: real HID handles answer HidD_GetAttributes.
-    HIDD_ATTRIBUTES attr{};
-    attr.Size = sizeof(attr);
-    if (HidD_GetAttributes(h, &attr)) {
-      std::lock_guard<std::mutex> lock(g_mutex);
+// Patches one named import in the game module's own IAT. No thread freeze:
+// a single pointer write under VirtualProtect.
+bool PatchGameIAT(const char* dllName, const char* funcName, void* detour, void** slotOut,
+                  void** origOut) {
+  auto* base = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
+  if (!base) return false;
+  const auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+  if (dos->e_magic != IMAGE_DOS_SIGNATURE) return false;
+  const auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+  if (nt->Signature != IMAGE_NT_SIGNATURE) return false;
+  const auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+  if (!dir.VirtualAddress) return false;
+  auto* desc = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(base + dir.VirtualAddress);
+  for (; desc->Name; ++desc) {
+    const char* name = reinterpret_cast<const char*>(base + desc->Name);
+    if (!SameName(name, dllName)) continue;
+    auto* thunkName = reinterpret_cast<IMAGE_THUNK_DATA64*>(base + desc->OriginalFirstThunk);
+    auto* thunkIAT = reinterpret_cast<IMAGE_THUNK_DATA64*>(base + desc->FirstThunk);
+    for (; thunkName->u1.AddressOfData; ++thunkName, ++thunkIAT) {
+      if (thunkName->u1.Ordinal & IMAGE_ORDINAL_FLAG64) continue;
+      const auto* import = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(base + thunkName->u1.AddressOfData);
+      if (!SameName(reinterpret_cast<const char*>(import->Name), funcName)) continue;
+      DWORD old = 0;
+      if (!VirtualProtect(&thunkIAT->u1.Function, sizeof(void*), PAGE_READWRITE, &old)) {
+        return false;
+      }
+      *origOut = reinterpret_cast<void*>(thunkIAT->u1.Function);
+      thunkIAT->u1.Function = reinterpret_cast<ULONGLONG>(detour);
+      VirtualProtect(&thunkIAT->u1.Function, sizeof(void*), old, &old);
+      *slotOut = reinterpret_cast<void**>(&thunkIAT->u1.Function);
+      return true;
+    }
+  }
+  return false;
+}
+
+void ClassifyHandle(HANDLE h) {
+  HIDD_ATTRIBUTES attr{};
+  attr.Size = sizeof(attr);
+  if (!HidD_GetAttributes(h, &attr)) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_notHid.insert(h);
+    return;
+  }
+  PHIDP_PREPARSED_DATA ppd = nullptr;
+  if (!HidD_GetPreparsedData(h, &ppd) || !ppd) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_notHid.insert(h);
+    return;
+  }
+  HIDP_CAPS caps{};
+  USAGE collection = 0;
+  if (HidP_GetCaps(ppd, &caps) == HIDP_STATUS_SUCCESS && caps.UsagePage == 0x01) {
+    collection = caps.Usage;
+  }
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (collection == 0x04 || collection == 0x05) {
       g_hidHandles.insert(h);
       char buf[128];
       std::snprintf(buf, sizeof(buf), "hid: tracking handle %p vid=%04x pid=%04x", h,
                     attr.VendorID, attr.ProductID);
       Logger::Instance().Info(buf);
+    } else {
+      g_notHid.insert(h);
     }
-  }
-  return h;
-}
-
-BOOL WINAPI DetourCloseHandle(HANDLE h) {
-  {
-    std::lock_guard<std::mutex> lock(g_mutex);
-    g_hidHandles.erase(h);
-  }
-  RemoveDevice(h);
-  return g_realCloseHandle(h);
-}
-
-void ClassifyHandle(HANDLE h) {
-  PHIDP_PREPARSED_DATA ppd = nullptr;
-  if (!HidD_GetPreparsedData(h, &ppd) || !ppd) return;
-  HIDP_CAPS caps{};
-  USAGE collection = 0;
-  if (HidP_GetCaps(ppd, &caps) == HIDP_STATUS_SUCCESS && caps.UsagePage == 0x01) {
-    collection = caps.Usage;
   }
   GetOrAddDevice(h, ppd, false, collection);
   LogDeviceOnce(h, "hidread", collection);
@@ -89,15 +124,21 @@ void ClassifyHandle(HANDLE h) {
 
 BOOL WINAPI DetourReadFile(HANDLE h, LPVOID buf, DWORD toRead, LPDWORD readOut,
                             LPOVERLAPPED ov) {
-  const BOOL ok = g_realReadFile(h, buf, toRead, readOut, ov);
+  const auto real = reinterpret_cast<ReadFileFn>(g_realReadFile);
+  const BOOL ok = real(h, buf, toRead, readOut, ov);
   if (!ok || !buf || !readOut || *readOut == 0 || ov || !g_config) return ok;
   bool tracked = false;
   {
     std::lock_guard<std::mutex> lock(g_mutex);
     tracked = g_hidHandles.find(h) != g_hidHandles.end();
+    if (!tracked && g_notHid.find(h) != g_notHid.end()) return ok;
   }
-  if (!tracked) return ok;
-  if (!HasDevice(h)) ClassifyHandle(h);
+  if (!tracked) {
+    if (!HasDevice(h)) ClassifyHandle(h);
+    std::lock_guard<std::mutex> lock(g_mutex);
+    tracked = g_hidHandles.find(h) != g_hidHandles.end();
+    if (!tracked) return ok;
+  }
   if (RemapHidReport(h, static_cast<uint8_t*>(buf), *readOut, g_config->Get())) {
     const uint64_t now = NowMs();
     std::lock_guard<std::mutex> lock(g_mutex);
@@ -109,14 +150,24 @@ BOOL WINAPI DetourReadFile(HANDLE h, LPVOID buf, DWORD toRead, LPDWORD readOut,
   return ok;
 }
 
-bool HookOne(const char* name, void* detour, void** realOut, const char* logName) {
-  void* target =
-      reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), name));
-  if (!target) return false;
-  if (MH_CreateHook(target, detour, realOut) != MH_OK) return false;
-  if (MH_EnableHook(target) != MH_OK) return false;
-  Logger::Instance().Info(std::string("hidread: hooked ") + logName);
-  return true;
+BOOL WINAPI DetourCloseHandle(HANDLE h) {
+  const auto real = reinterpret_cast<CloseHandleFn>(g_realCloseHandle);
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_hidHandles.erase(h);
+    g_notHid.erase(h);
+  }
+  RemoveDevice(h);
+  return real(h);
+}
+
+void RestoreSlot(void** slot, void* orig) {
+  if (!slot || !orig) return;
+  DWORD old = 0;
+  if (VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &old)) {
+    *slot = orig;
+    VirtualProtect(slot, sizeof(void*), old, &old);
+  }
 }
 
 }  // namespace
@@ -125,28 +176,30 @@ bool InstallHidReadHooks(const Config& config) {
   std::lock_guard<std::mutex> lock(g_mutex);
   g_config = &config;
   if (g_installed) return true;
-  bool ok = true;
-  if (!g_realCreateFileW) ok = HookOne("CreateFileW", reinterpret_cast<void*>(&DetourCreateFileW),
-                                       reinterpret_cast<void**>(&g_realCreateFileW),
-                                       "CreateFileW") &&
-                                ok;
-  if (!g_realReadFile) ok = HookOne("ReadFile", reinterpret_cast<void*>(&DetourReadFile),
-                                    reinterpret_cast<void**>(&g_realReadFile), "ReadFile") &&
-                             ok;
-  if (!g_realCloseHandle) ok = HookOne("CloseHandle", reinterpret_cast<void*>(&DetourCloseHandle),
-                                       reinterpret_cast<void**>(&g_realCloseHandle),
-                                       "CloseHandle") &&
-                                ok;
-  g_installed = ok;
-  if (!ok) Logger::Instance().Warn("hidread: one or more hooks failed");
-  return ok;
+  bool readOk = PatchGameIAT("KERNEL32.dll", "ReadFile", reinterpret_cast<void*>(&DetourReadFile),
+                              &g_readFileSlot, &g_realReadFile);
+  bool closeOk = PatchGameIAT("KERNEL32.dll", "CloseHandle",
+                               reinterpret_cast<void*>(&DetourCloseHandle), &g_closeHandleSlot,
+                               &g_realCloseHandle);
+  if (readOk) Logger::Instance().Info("hidread: game IAT ReadFile patched");
+  if (closeOk) Logger::Instance().Info("hidread: game IAT CloseHandle patched");
+  g_installed = readOk && closeOk;
+  if (!g_installed) {
+    Logger::Instance().Warn("hidread: IAT patch missed (imports by ordinal?)");
+    RestoreSlot(g_readFileSlot, g_realReadFile);
+    RestoreSlot(g_closeHandleSlot, g_realCloseHandle);
+    g_readFileSlot = g_closeHandleSlot = nullptr;
+    g_realReadFile = g_realCloseHandle = nullptr;
+  }
+  return g_installed;
 }
 
 void RemoveHidReadHooks() {
   std::lock_guard<std::mutex> lock(g_mutex);
-  g_realCreateFileW = nullptr;
-  g_realReadFile = nullptr;
-  g_realCloseHandle = nullptr;
+  RestoreSlot(g_readFileSlot, g_realReadFile);
+  RestoreSlot(g_closeHandleSlot, g_realCloseHandle);
+  g_readFileSlot = g_closeHandleSlot = nullptr;
+  g_realReadFile = g_realCloseHandle = nullptr;
   g_installed = false;
   g_config = nullptr;
 }

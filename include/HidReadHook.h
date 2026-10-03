@@ -1,8 +1,10 @@
 #pragma once
 
-// Direct-HID layer. Tracks HID device handles opened via CreateFileW and
-// remaps synchronous ReadFile input reports through the HidReport core.
-// File reads that are not from tracked HID handles pass through untouched.
+// Direct-HID layer. Intercepts the GAME MODULE's own ReadFile/CloseHandle
+// imports (IAT patching: pointer swap, no thread freezing, other modules
+// untouched) and remaps synchronous HID input reports through HidReport.
+// File reads that are not from tracked HID handles pass through untouched,
+// with a negative cache keeping the hot path to two hash lookups.
 
 namespace crdeadzone {
 

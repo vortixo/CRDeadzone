@@ -73,7 +73,16 @@ void InitThread() {
   using namespace crdeadzone;
   const std::wstring dir = DllDirectory();
   Logger::Instance().Init(dir);
-  Logger::Instance().Info("CRDeadzone v1.1.0 init (crloader)");
+  Logger::Instance().Info("CRDeadzone v1.1.1 init (crloader)");
+
+  {  // Kill switch: drop an empty disabled.txt next to the DLL if a future
+    // build ever misbehaves; the mod then logs and installs nothing.
+    std::error_code ec;
+    if (std::filesystem::exists(std::filesystem::path(dir) / "disabled.txt", ec)) {
+      Logger::Instance().Warn("disabled.txt present: hooks not installed");
+      return;
+    }
+  }
 
   if (MH_Initialize() != MH_OK) {
     Logger::Instance().Error("MinHook init failed; hooks disabled");

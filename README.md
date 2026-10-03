@@ -109,6 +109,9 @@ GitHub Releases tab as `CRDeadzone-<tag>.zip`.
   the DLL (the tab only appears when a supporting mod is installed).
 - **Settings do nothing**: open `CRDeadzone.log` - it states which hooks
   installed. If nothing installed, paste the log into an issue.
+- **Game won't start with the mod**: create an empty file
+  `crmods/CRDeadzone/disabled.txt` to make the DLL log and exit without
+  hooking anything, then report with the log attached.
 - **Steam controller glyphs wrong**: unrelated to this mod; see CRModMenu docs.
 
 ## License
