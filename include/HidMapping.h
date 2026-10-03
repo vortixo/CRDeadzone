@@ -21,6 +21,15 @@ struct HidMapping {
   bool triggersAreRxRy = false;
 };
 
+// Generic Desktop collections that carry gamepad sticks. Anything else
+// (pointer, mouse, keyboard, ...) is classified and never touched.
+inline constexpr unsigned kUsageJoystick = 0x04;
+inline constexpr unsigned kUsageGamepad = 0x05;
+
+constexpr bool IsGamepadCollection(unsigned usage) {
+  return usage == kUsageJoystick || usage == kUsageGamepad;
+}
+
 // Pure mapping decision, unit-testable without HID headers.
 HidMapping DecideMapping(bool hasX, bool hasY, bool hasZ, bool hasRx, bool hasRy,
                          bool hasRz);

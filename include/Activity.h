@@ -9,10 +9,14 @@
 
 namespace crdeadzone {
 
+// Window in which wrapper activity suppresses the lower layers.
+inline constexpr uint64_t kWrapperActivityWindowMs = 2000;
+
 void MarkWrapperActive();
 bool WrapperRecentlyActive();
-// Test hook: override the clock (milliseconds).
-void SetTickOverride(uint64_t ms);
-void ClearTickOverride();
+
+// Pure arbitration rule, unit tested with explicit timestamps:
+// lastActiveMs == 0 means "never active".
+bool IsRecentlyActive(uint64_t lastActiveMs, uint64_t nowMs);
 
 }  // namespace crdeadzone

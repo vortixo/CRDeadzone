@@ -41,7 +41,8 @@ jobs:
       - name: Build and run logic tests
         run: |
           g++ -std=c++20 -Wall -Wextra -Werror -Iinclude \
-            tests/test_deadzone_math.cpp src/DeadzoneMath.cpp src/Config.cpp \
+            tests/test_main.cpp tests/test_deadzone_math.cpp tests/test_config.cpp \
+            tests/test_hid.cpp tests/test_support.cpp src/DeadzoneMath.cpp src/Config.cpp \
             src/HidMapping.cpp src/Activity.cpp src/PatternScanner.cpp src/Logger.cpp \
             src/Disasm.cpp \
             -o /tmp/test_deadzone_math

@@ -5,7 +5,11 @@
 namespace crdeadzone {
 
 float ApplyAxialDeadzone(float value, float inner, float outer) {
-  if (outer <= inner) return (value >= 0.0f ? 1.0f : -1.0f) * (value != 0.0f ? 1.0f : 0.0f);
+  if (outer <= inner) {
+    // Degenerate range: any deflection reads as full, zero stays zero.
+    if (value == 0.0f) return 0.0f;
+    return value > 0.0f ? 1.0f : -1.0f;
+  }
   const float mag = std::fabs(value);
   if (mag < inner) return 0.0f;
   if (mag >= outer) return value >= 0.0f ? 1.0f : -1.0f;

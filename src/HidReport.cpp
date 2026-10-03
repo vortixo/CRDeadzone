@@ -84,7 +84,7 @@ DeviceEntry* GetOrAddDevice(void* key, void* ppd, bool ownsPpd, unsigned collect
   DeviceEntry e;
   e.ppd = preparsed;
   e.ownsPpd = ownsPpd;
-  if (preparsed && (coll == 0x04 || coll == 0x05)) {
+  if (preparsed && IsGamepadCollection(coll)) {
     FindRange(preparsed, kX, e.mapping.x);
     FindRange(preparsed, kY, e.mapping.y);
     FindRange(preparsed, kZ, e.mapping.z);

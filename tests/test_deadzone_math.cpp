@@ -1,338 +1,165 @@
-// Portable logic tests: deadzone math + INI parsing + HID mapping helpers.
-// Build (Linux/macOS/Windows): g++ -std=c++20 -Iinclude tests/test_deadzone_math.cpp
-//   src/DeadzoneMath.cpp src/Config.cpp src/HidMapping.cpp src/Activity.cpp
-//   src/PatternScanner.cpp src/Logger.cpp -o test_deadzone_math && ./test_deadzone_math
+// Deadzone math specs: every branch of ApplyAxialDeadzone,
+// ApplyRadialDeadzone, ApplyTriggerDeadzone, CurvePowerForChoice, the
+// XInput conversion helpers, and the shared MakeGamepadSettings /
+// ApplyGamepadState path all input layers use.
 
-#include <cmath>
-#include <cstdio>
-#include <cstring>
-#include <filesystem>
-#include <fstream>
-#include <string>
+#include "Test.h"
 
-#include "Activity.h"
-#include "Config.h"
 #include "DeadzoneMath.h"
-#include "Disasm.h"
-#include "HidMapping.h"
-#include "Logger.h"
-#include "PatternScanner.h"
 
 namespace {
 
-int g_fail = 0;
+using namespace crdeadzone;
 
-void Check(bool cond, const char* name) {
-  if (!cond) {
-    ++g_fail;
-    std::printf("FAIL: %s\n", name);
-  } else {
-    std::printf("ok: %s\n", name);
-  }
+void Axial() {
+  // Basic rescale: below inner reads 0, outer reads full, linear between.
+  EXPECT_EQ(ApplyAxialDeadzone(0.05f, 0.15f, 1.0f), 0.0f);
+  EXPECT_NEAR(ApplyAxialDeadzone(1.0f, 0.15f, 1.0f), 1.0f, 1e-6f);
+  EXPECT_NEAR(ApplyAxialDeadzone(-1.0f, 0.15f, 1.0f), -1.0f, 1e-6f);
+  // (0.575 - 0.15) / (1.0 - 0.15) == 0.5 exactly.
+  EXPECT_NEAR(ApplyAxialDeadzone(0.575f, 0.15f, 1.0f), 0.5f, 1e-6f);
+  // Zero deadzone is a pure passthrough, including zero itself.
+  EXPECT_EQ(ApplyAxialDeadzone(0.0f, 0.0f, 1.0f), 0.0f);
+  EXPECT_NEAR(ApplyAxialDeadzone(0.5f, 0.0f, 1.0f), 0.5f, 1e-6f);
+  // Degenerate range: any deflection reads full, zero stays zero.
+  EXPECT_EQ(ApplyAxialDeadzone(0.3f, 0.5f, 0.5f), 1.0f);
+  EXPECT_EQ(ApplyAxialDeadzone(-0.3f, 0.5f, 0.5f), -1.0f);
+  EXPECT_EQ(ApplyAxialDeadzone(0.0f, 0.5f, 0.5f), 0.0f);
+  EXPECT_EQ(ApplyAxialDeadzone(0.2f, 0.6f, 0.4f), 1.0f);
 }
 
-bool Near(float a, float b, float eps = 1e-4f) { return std::fabs(a - b) <= eps; }
-
-void TestAxial() {
-  using crdeadzone::ApplyAxialDeadzone;
-  Check(ApplyAxialDeadzone(0.05f, 0.15f, 1.0f) == 0.0f, "axial below inner -> 0");
-  Check(Near(ApplyAxialDeadzone(1.0f, 0.15f, 1.0f), 1.0f), "axial full deflection -> 1");
-  Check(Near(ApplyAxialDeadzone(-1.0f, 0.15f, 1.0f), -1.0f), "axial negative full -> -1");
-  Check(Near(ApplyAxialDeadzone(0.575f, 0.15f, 1.0f), 0.5f), "axial mid rescale");
-  Check(ApplyAxialDeadzone(0.0f, 0.0f, 1.0f) == 0.0f, "axial zero deadzone keeps 0");
-  Check(Near(ApplyAxialDeadzone(0.5f, 0.0f, 1.0f), 0.5f), "axial zero deadzone passthrough");
-}
-
-void TestRadial() {
-  using crdeadzone::ApplyRadialDeadzone;
+void Radial() {
   float x = 0.05f, y = 0.0f;
   ApplyRadialDeadzone(x, y, 0.15f, 1.0f, 1.0f);
-  Check(x == 0.0f && y == 0.0f, "radial inside deadzone -> 0");
+  EXPECT_TRUE(x == 0.0f && y == 0.0f);
 
   x = 1.0f;
   y = 0.0f;
   ApplyRadialDeadzone(x, y, 0.15f, 1.0f, 1.0f);
-  Check(Near(x, 1.0f) && Near(y, 0.0f), "radial full deflection preserved");
+  EXPECT_NEAR(x, 1.0f, 1e-6f);
+  EXPECT_NEAR(y, 0.0f, 1e-6f);
 
+  // Magnitude 1.0, no deadzone, linear: direction preserved.
   x = 0.6f;
-  y = 0.8f;  // mag 1.0
+  y = 0.8f;
   ApplyRadialDeadzone(x, y, 0.0f, 1.0f, 1.0f);
-  Check(Near(x, 0.6f) && Near(y, 0.8f), "radial direction preserved linear");
+  EXPECT_NEAR(x, 0.6f, 1e-6f);
+  EXPECT_NEAR(y, 0.8f, 1e-6f);
 
+  // Power curve applies to the rescaled magnitude: 0.5^2 == 0.25.
   x = 0.3f;
-  y = 0.4f;  // mag 0.5
+  y = 0.4f;
   ApplyRadialDeadzone(x, y, 0.0f, 1.0f, 2.0f);
-  Check(Near(x, 0.15f) && Near(y, 0.2f), "radial power curve on magnitude");
+  EXPECT_NEAR(x, 0.15f, 1e-6f);
+  EXPECT_NEAR(y, 0.2f, 1e-6f);
 
   x = 0.0f;
   y = 0.0f;
   ApplyRadialDeadzone(x, y, 0.15f, 1.0f, 1.0f);
-  Check(x == 0.0f && y == 0.0f, "radial zero stays zero");
+  EXPECT_TRUE(x == 0.0f && y == 0.0f);
+
+  // Zero input with zero deadzone must stay (0,0): no 0/0 NaN.
+  x = 0.0f;
+  y = 0.0f;
+  ApplyRadialDeadzone(x, y, 0.0f, 1.0f, 1.0f);
+  EXPECT_TRUE(x == 0.0f && y == 0.0f);
+
+  // Degenerate range behaves like the axial one.
+  x = 0.2f;
+  y = 0.0f;
+  ApplyRadialDeadzone(x, y, 0.5f, 0.5f, 1.0f);
+  EXPECT_TRUE(x == 0.0f && y == 0.0f);
+  x = 1.0f;
+  y = 0.0f;
+  ApplyRadialDeadzone(x, y, 0.5f, 0.5f, 1.0f);
+  EXPECT_NEAR(x, 1.0f, 1e-6f);
+
+  // Non-positive power falls back to linear.
+  x = 0.3f;
+  y = 0.4f;
+  ApplyRadialDeadzone(x, y, 0.0f, 1.0f, 0.0f);
+  EXPECT_NEAR(x, 0.3f, 1e-6f);
+  EXPECT_NEAR(y, 0.4f, 1e-6f);
 }
 
-void TestTrigger() {
-  using crdeadzone::ApplyTriggerDeadzone;
-  Check(ApplyTriggerDeadzone(0.02f, 0.05f) == 0.0f, "trigger below dz -> 0");
-  Check(Near(ApplyTriggerDeadzone(1.0f, 0.05f), 1.0f), "trigger full -> 1");
-  Check(Near(ApplyTriggerDeadzone(0.525f, 0.05f), 0.5f), "trigger rescale");
-  Check(ApplyTriggerDeadzone(0.5f, 0.0f) == 0.5f, "trigger zero dz passthrough");
+void Trigger() {
+  EXPECT_EQ(ApplyTriggerDeadzone(0.02f, 0.05f), 0.0f);
+  EXPECT_EQ(ApplyTriggerDeadzone(0.0f, 0.05f), 0.0f);
+  EXPECT_NEAR(ApplyTriggerDeadzone(1.0f, 0.05f), 1.0f, 1e-6f);
+  // (0.525 - 0.05) / (1 - 0.05) == 0.5 exactly.
+  EXPECT_NEAR(ApplyTriggerDeadzone(0.525f, 0.05f), 0.5f, 1e-6f);
+  EXPECT_EQ(ApplyTriggerDeadzone(0.5f, 0.0f), 0.5f);
+  // Degenerate deadzone swallows everything, including full press.
+  EXPECT_EQ(ApplyTriggerDeadzone(1.0f, 1.0f), 0.0f);
 }
 
-void TestCurves() {
-  using crdeadzone::CurvePowerForChoice;
-  Check(CurvePowerForChoice(0, 100) == 1.0f, "curve linear");
-  Check(CurvePowerForChoice(1, 100) > 1.0f, "curve mild > linear");
-  Check(CurvePowerForChoice(2, 100) > CurvePowerForChoice(1, 100), "curve aggressive > mild");
-  Check(Near(CurvePowerForChoice(3, 200), 2.0f), "curve custom slider");
-  Check(Near(CurvePowerForChoice(3, 9999), 3.0f), "curve custom clamped high");
-  Check(Near(CurvePowerForChoice(3, 0), 0.5f), "curve custom clamped low");
+void Curves() {
+  EXPECT_EQ(CurvePowerForChoice(0, 100), 1.0f);
+  EXPECT_TRUE(CurvePowerForChoice(1, 100) > 1.0f);
+  EXPECT_TRUE(CurvePowerForChoice(2, 100) > CurvePowerForChoice(1, 100));
+  EXPECT_NEAR(CurvePowerForChoice(3, 200), 2.0f, 1e-6f);
+  EXPECT_NEAR(CurvePowerForChoice(3, 9999), 3.0f, 1e-6f);
+  EXPECT_NEAR(CurvePowerForChoice(3, 0), 0.5f, 1e-6f);
+  // Unknown choice falls back to linear, never to garbage.
+  EXPECT_EQ(CurvePowerForChoice(99, 100), 1.0f);
 }
 
-void TestConfigParse() {
-  using crdeadzone::Config;
-  Check(Config::HashBytes("abc") == Config::HashBytes("abc"), "hash stable");
-  Check(Config::HashBytes("abc") != Config::HashBytes("abd"), "hash differs");
-  Check(Config::ParseInt("15", 0) == 15, "parse int");
-  Check(Config::ParseInt("  42  ", 0) == 42, "parse int trimmed");
-  Check(Config::ParseInt("abc", 7) == 7, "parse int fallback");
-  Check(Config::ParseInt("12x", 7) == 7, "parse int trailing junk fallback");
-  Check(Config::ParseInt("", 7) == 7, "parse empty fallback");
-  Check(Config::ClampInt(999, 0, 50) == 50, "clamp high");
-  Check(Config::ClampInt(-5, 0, 50) == 0, "clamp low");
-  Check(Config::ClampInt(25, 0, 50) == 25, "clamp passthrough");
+void XInputConversion() {
+  EXPECT_EQ(XInputShortToFloat(32767), 1.0f);
+  EXPECT_EQ(XInputShortToFloat(-32768), -1.0f);
+  EXPECT_EQ(XInputShortToFloat(0), 0.0f);
+  EXPECT_EQ(XInputShortToFloat(99999), 1.0f);
+  EXPECT_EQ(XInputShortToFloat(-99999), -1.0f);
+  EXPECT_EQ(FloatToXInputShort(1.0f), 32767);
+  // Truncation toward zero makes the negative extreme asymmetric (-32767,
+  // not -32768); pinned so any change is deliberate.
+  EXPECT_EQ(FloatToXInputShort(-1.0f), -32767);
+  EXPECT_EQ(FloatToXInputShort(2.0f), 32767);
+  EXPECT_EQ(FloatToXInputShort(-2.0f), -32767);
+  // 0.5 * 32767 == 16383.5, truncated.
+  EXPECT_EQ(FloatToXInputShort(0.5f), 16383);
+  // Round trip stays within 1 LSB.
+  EXPECT_NEAR(XInputShortToFloat(FloatToXInputShort(0.5f)), 0.5f, 1e-4f);
 }
 
-void TestHidMapping() {
-  using crdeadzone::DecideMapping;
-  auto ds4 = DecideMapping(true, true, true, true, true, true);
-  Check(ds4.usable && ds4.lookUsesZRz && ds4.triggersAreRxRy, "hid mapping full set (DS4)");
-  auto xbox = DecideMapping(true, true, false, true, true, false);
-  Check(xbox.usable && !xbox.lookUsesZRz && !xbox.triggersAreRxRy, "hid mapping X/Y+Rx/Ry");
-  auto noLook = DecideMapping(true, true, false, false, false, false);
-  Check(!noLook.usable, "hid mapping no look pair unusable");
-  auto noMove = DecideMapping(false, true, true, true, true, true);
-  Check(!noMove.usable, "hid mapping no movement pair unusable");
-}
+void GamepadState() {
+  const auto linked = MakeGamepadSettings(15, 100, 0, 10, 100, 0, 5, 5, 100, false, false);
+  EXPECT_EQ(linked.lookInner, linked.moveInner);
+  EXPECT_EQ(linked.lookOuter, linked.moveOuter);
+  EXPECT_EQ(linked.triggerRight, linked.triggerLeft);
 
-void TestHidNorm() {
-  using namespace crdeadzone;
-  Check(HidToSigned(128, 0, 255) > -0.01f && HidToSigned(128, 0, 255) < 0.01f,
-        "hid center ~= 0");
-  Check(HidToSigned(0, 0, 255) == -1.0f, "hid min -> -1");
-  Check(HidToSigned(255, 0, 255) == 1.0f, "hid max -> 1");
-  Check(HidToUnit(0, 0, 255) == 0.0f && HidToUnit(255, 0, 255) == 1.0f, "hid unit ends");
-  Check(SignedToHid(0.0f, 0, 255) == 127 || SignedToHid(0.0f, 0, 255) == 128,
-        "hid roundtrip center");
-  Check(UnitToHid(1.0f, 0, 255) == 255, "hid roundtrip full");
-  Check(HidToSigned(5, 10, 10) == 0.0f, "hid degenerate range safe");
-}
+  const auto split = MakeGamepadSettings(15, 90, 1, 10, 80, 2, 5, 20, 100, true, true);
+  EXPECT_NEAR(split.moveInner, 0.15f, 1e-6f);
+  EXPECT_NEAR(split.moveOuter, 0.9f, 1e-6f);
+  EXPECT_NEAR(split.lookInner, 0.10f, 1e-6f);
+  EXPECT_NEAR(split.lookOuter, 0.8f, 1e-6f);
+  EXPECT_TRUE(split.movePower < split.lookPower);
+  EXPECT_NEAR(split.triggerRight, 0.20f, 1e-6f);
 
-void TestActivity() {
-  using namespace crdeadzone;
-  SetTickOverride(10000);
-  Check(!WrapperRecentlyActive(), "activity initially idle");
-  MarkWrapperActive();
-  SetTickOverride(11000);
-  Check(WrapperRecentlyActive(), "activity live within window");
-  SetTickOverride(13000);
-  Check(!WrapperRecentlyActive(), "activity expires after window");
-  ClearTickOverride();
-}
+  // Custom curve choice honors the shared exponent slider.
+  const auto custom = MakeGamepadSettings(15, 100, 3, 10, 100, 3, 5, 5, 200, true, true);
+  EXPECT_NEAR(custom.movePower, 2.0f, 1e-6f);
+  EXPECT_NEAR(custom.lookPower, 2.0f, 1e-6f);
 
-void TestXInputConversion() {
-  using namespace crdeadzone;
-  Check(XInputShortToFloat(32767) == 1.0f, "xinput max -> 1");
-  Check(XInputShortToFloat(-32768) == -1.0f, "xinput min -> -1");
-  Check(XInputShortToFloat(0) == 0.0f, "xinput zero -> 0");
-  Check(XInputShortToFloat(99999) == 1.0f, "xinput clamp high");
-  Check(XInputShortToFloat(-99999) == -1.0f, "xinput clamp low");
-  Check(FloatToXInputShort(1.0f) == 32767, "xinput back max");
-  Check(FloatToXInputShort(-1.0f) == -32767, "xinput back min");
-  Check(FloatToXInputShort(2.0f) == 32767, "xinput back clamp");
-  // Round trip within 1 LSB.
-  Check(std::abs(XInputShortToFloat(FloatToXInputShort(0.5f)) - 0.5f) < 0.0001f,
-        "xinput roundtrip");
-}
-
-void TestGamepadSettings() {
-  using namespace crdeadzone;
-  auto linked = MakeGamepadSettings(15, 100, 0, 10, 100, 0, 5, 5, 100, false, false);
-  Check(linked.lookInner == linked.moveInner, "linked look follows movement");
-  Check(linked.triggerRight == linked.triggerLeft, "linked trigger follows left");
-  auto split = MakeGamepadSettings(15, 90, 1, 10, 80, 2, 5, 20, 100, true, true);
-  Check(Near(split.moveInner, 0.15f) && Near(split.moveOuter, 0.9f), "split movement values");
-  Check(Near(split.lookInner, 0.10f) && Near(split.lookOuter, 0.8f), "split look values");
-  Check(split.movePower < split.lookPower, "split curve presets differ");
-  Check(Near(split.triggerRight, 0.20f), "split trigger right");
-
+  // End to end through the real settings builder: movement deadzoned, look
+  // with zero inner passes through, triggers rescaled.
   float lx = 0.05f, ly = 0.0f, rx = 0.05f, ry = 0.0f, lt = 0.02f, rt = 0.9f;
-  GamepadSettings gs;
-  gs.moveInner = 0.15f;
-  gs.lookInner = 0.0f;  // look passes through
-  gs.triggerLeft = 0.05f;
-  gs.triggerRight = 0.05f;
+  const auto gs =
+      MakeGamepadSettings(15, 100, 0, 0, 100, 0, 5, 5, 100, true, false);
   ApplyGamepadState(lx, ly, rx, ry, lt, rt, gs);
-  Check(lx == 0.0f && ly == 0.0f, "combined movement deadzoned");
-  Check(Near(rx, 0.05f), "combined look passthrough");
-  Check(lt == 0.0f && Near(rt, (0.9f - 0.05f) / 0.95f), "combined triggers");
-}
-
-void TestPatternScanner() {
-  using namespace crdeadzone;
-  auto bytes = PatternScanner::Parse("48 8D ?? 0D");
-  Check(bytes.size() == 4 && !bytes[0].wildcard && bytes[2].wildcard && bytes[3].value == 0x0D,
-        "pattern parse wildcards");
-
-  uint8_t buf[64] = {};
-  buf[10] = 0x48;
-  buf[11] = 0x8D;
-  buf[12] = 0x3D;  // any modrm/r+m with mod=00... (here: 0x3D passes the mask check only in FindLeaRefs)
-  buf[13] = 0xAA;
-  PatternScanner sc(buf, sizeof(buf));
-  auto hit = sc.Find("48 8D ?? AA");
-  Check(hit && *hit == buf + 10, "pattern find");
-  Check(!sc.Find("FF FF FF").has_value(), "pattern miss");
-  auto all = sc.FindAll("48", 16);
-  Check(all.size() == 1, "pattern findall");
-
-  const char text[] = {'d', 'e', 'a', 'd', 'Z', 'o', 'n', 'e', 0, 'x'};
-  auto str = FindStringRef(const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(text)),
-                           sizeof(text), "deadZone");
-  Check(str && *str == reinterpret_cast<const uint8_t*>(text), "string anchor found");
-  Check(!FindStringRef(const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(text)),
-                       sizeof(text), "missing")
-             .has_value(),
-        "string anchor miss");
-
-  // LEA rcx, [rip+disp] -> 48 8D 0D <disp32>; point it at text.
-  uint8_t code[32] = {};
-  const uint8_t* target = reinterpret_cast<const uint8_t*>(text);
-  code[4] = 0x48;
-  code[5] = 0x8D;
-  code[6] = 0x0D;
-  int32_t disp = static_cast<int32_t>(target - (code + 4 + 7));
-  std::memcpy(code + 7, &disp, 4);
-  auto refs = FindLeaRefs(code, sizeof(code), target, 8);
-  Check(refs.size() == 1 && refs[0] == code + 4, "LEA ref found");
-}
-
-void TestConfigFile() {
-  using namespace crdeadzone;
-  const auto dir = std::filesystem::temp_directory_path() / "crdeadzone_test_cfg";
-  std::filesystem::create_directories(dir);
-  const auto ini = dir / "crdeadzone.ini";
-  {
-    std::ofstream f(ini);
-    f << "[Settings]\nmovement_deadzone=25\nlook_curve=2\nenable_per_stick=0\n";
-  }
-  std::string narrow = ini.string();
-  Config c(std::wstring(narrow.begin(), narrow.end()));
-  auto s = c.Get();
-  Check(s.movementDeadzone == 25 && s.lookCurve == 2 && !s.perStick, "config file load");
-  Check(s.lookDeadzone == 10, "config file defaults kept");
-  // External edit is picked up.
-  {
-    std::ofstream f(ini);
-    f << "[Settings]\nmovement_deadzone=30\n";
-  }
-  Check(c.PollForChanges(0), "config change detected");
-  c.Load();
-  Check(c.Get().movementDeadzone == 30, "config reload applies");
-  Check(!c.PollForChanges(0), "config quiet when unchanged");
-  std::filesystem::remove_all(dir);
-}
-
-void TestDisasm() {
-  using namespace crdeadzone;
-  // call rel32: E8 <disp> ; target = pos + 5 + disp.
-  {
-    uint8_t code[] = {0xE8, 0xFB, 0x00, 0x00, 0x00, 0xC3};
-    DecodedInsn ins = DecodeOne(code, sizeof(code));
-    Check(ins.length == 5 && ins.isCall && !ins.isRet, "disasm call rel32");
-    Check(ins.relTarget == 5 + 0xFB, "disasm call target math");
-    FlowInfo flow = WalkFlow(code, 16, sizeof(code));
-    Check(flow.callTargets.size() == 1 && flow.insns.back().isRet, "disasm walk call+ret");
-  }
-  // LEA rcx,[rip+disp]: 48 8D 0D <disp32>.
-  {
-    uint8_t code[] = {0x48, 0x8D, 0x0D, 0x10, 0x00, 0x00, 0x00, 0x90};
-    DecodedInsn ins = DecodeOne(code, sizeof(code));
-    Check(ins.length == 7 && ins.hasRipRef, "disasm lea rip");
-    Check(ins.ripTarget == 7 + 0x10, "disasm lea target math");
-    Check(ins.text.find("lea") != std::string::npos, "disasm lea mnemonic");
-  }
-  // push rbp; mov rbp,rsp; pop rbp; ret.
-  {
-    uint8_t code[] = {0x55, 0x48, 0x89, 0xE5, 0x5D, 0xC3};
-    FlowInfo flow = WalkFlow(code, 16, sizeof(code));
-    Check(flow.insns.size() == 4 && flow.insns.back().isRet, "disasm prologue walk");
-    Check(flow.insns[1].length == 3, "disasm rex mov length");
-  }
-  // SIB + disp32: 48 8B 84 25 <disp32> (mov rax,[rbp+disp]).
-  {
-    uint8_t code[] = {0x48, 0x8B, 0x84, 0x25, 0x30, 0x00, 0x00, 0x00};
-    DecodedInsn ins = DecodeOne(code, sizeof(code));
-    Check(ins.length == 8, "disasm sib disp32 length");
-  }
-  // Unknown opcode stops the walk instead of desyncing.
-  {
-    uint8_t code[] = {0x90, 0xF1, 0x90};  // F1 = int1: intentionally unsupported
-    FlowInfo flow = WalkFlow(code, 16, sizeof(code));
-    Check(flow.insns.size() == 1 && flow.truncated, "disasm stops on unknown");
-  }
-  // Indirect call marks stopHere.
-  {
-    uint8_t code[] = {0xFF, 0x15, 0x00, 0x00, 0x00, 0x00};
-    DecodedInsn ins = DecodeOne(code, sizeof(code));
-    Check(ins.length == 6 && ins.stopHere && !ins.isCall, "disasm indirect call stops");
-  }
-  // mov reg,imm32 captures immediates.
-  {
-    uint8_t code[] = {0xB8, 0x9A, 0x99, 0x19, 0x3E, 0xC3};  // mov eax,0x3E19999A
-    DecodedInsn ins = DecodeOne(code, sizeof(code));
-    Check(ins.length == 5 && ins.text.find("imm32") != std::string::npos, "disasm mov imm32");
-  }
-}
-
-void TestLogger() {
-  using namespace crdeadzone;
-  const auto dir = std::filesystem::temp_directory_path() / "crdeadzone_test_log";
-  std::filesystem::create_directories(dir);
-  std::string narrow = dir.string();
-  Logger::Instance().Init(std::wstring(narrow.begin(), narrow.end()));
-  Logger::Instance().Info("hello-info");
-  Logger::Instance().Warn("hello-warn");
-  Logger::Instance().Error("hello-error");
-  Logger::Instance().Shutdown();
-  std::ifstream f(dir / "CRDeadzone.log");
-  const std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-  Check(content.find("[INFO] hello-info") != std::string::npos, "logger info line");
-  Check(content.find("[WARN] hello-warn") != std::string::npos, "logger warn line");
-  Check(content.find("[ERROR] hello-error") != std::string::npos, "logger error line");
-  std::filesystem::remove_all(dir);
+  EXPECT_TRUE(lx == 0.0f && ly == 0.0f);
+  EXPECT_NEAR(rx, 0.05f, 1e-6f);
+  EXPECT_EQ(lt, 0.0f);
+  EXPECT_NEAR(rt, (0.9f - 0.05f) / 0.95f, 1e-6f);
 }
 
 }  // namespace
 
-int main() {
-  TestAxial();
-  TestRadial();
-  TestTrigger();
-  TestCurves();
-  TestConfigParse();
-  TestHidMapping();
-  TestHidNorm();
-  TestActivity();
-  TestXInputConversion();
-  TestGamepadSettings();
-  TestPatternScanner();
-  TestConfigFile();
-  TestLogger();
-  TestDisasm();
-  if (g_fail == 0) {
-    std::printf("ALL TESTS PASSED\n");
-    return 0;
-  }
-  std::printf("%d TEST(S) FAILED\n", g_fail);
-  return 1;
+void DeadzoneMathTests() {
+  crtest::Suite("axial", Axial);
+  crtest::Suite("radial", Radial);
+  crtest::Suite("trigger", Trigger);
+  crtest::Suite("curves", Curves);
+  crtest::Suite("xinput-convert", XInputConversion);
+  crtest::Suite("gamepad-state", GamepadState);
 }
