@@ -22,6 +22,26 @@ static_assert(sizeof(void*) == 8, "CRDeadzone is x64 only");
 const Config* g_config = nullptr;
 std::mutex g_mutex;
 bool g_installed = false;
+uint64_t g_liveLoggedMs = 0;
+
+using XInputGetStateFn = DWORD(WINAPI*)(DWORD, XINPUT_STATE*);
+XInputGetStateFn g_realGetState = nullptr;
+XInputGetStateFn g_realGetStateEx = nullptr;  // ordinal 100 on xinput1_3
+
+uint64_t NowMs() {
+  LARGE_INTEGER f, c;
+  QueryPerformanceFrequency(&f);
+  QueryPerformanceCounter(&c);
+  return static_cast<uint64_t>(c.QuadPart * 1000 / f.QuadPart);
+}
+
+void LogLiveThrottled() {
+  const uint64_t now = NowMs();
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (now - g_liveLoggedMs < 10000) return;
+  g_liveLoggedMs = now;
+  Logger::Instance().Info("xinput: live, remapping polled state");
+}
 
 using XInputGetStateFn = DWORD(WINAPI*)(DWORD, XINPUT_STATE*);
 XInputGetStateFn g_realGetState = nullptr;
@@ -52,6 +72,7 @@ DWORD WINAPI DetourXInputGetState(DWORD userIndex, XINPUT_STATE* state) {
   const DWORD res = g_realGetState(userIndex, state);
   if (res == ERROR_SUCCESS && state && g_config && !WrapperRecentlyActive()) {
     ApplyToGamepad(state->Gamepad, g_config->Get());
+    LogLiveThrottled();
   }
   return res;
 }
@@ -60,6 +81,7 @@ DWORD WINAPI DetourXInputGetStateEx(DWORD userIndex, XINPUT_STATE* state) {
   const DWORD res = g_realGetStateEx(userIndex, state);
   if (res == ERROR_SUCCESS && state && g_config && !WrapperRecentlyActive()) {
     ApplyToGamepad(state->Gamepad, g_config->Get());
+    LogLiveThrottled();
   }
   return res;
 }

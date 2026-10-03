@@ -97,16 +97,46 @@ void DiscoverGameDeadzones() {
       log.Info(std::string("options: anchor '") + anchor + "' not found");
       continue;
     }
-    char buf[160];
-    snprintf(buf, sizeof(buf), "options: anchor '%s' @ %p", anchor, *hit);
+    char buf[192];
+    std::snprintf(buf, sizeof(buf), "options: anchor '%s' @ RVA 0x%llX", anchor,
+                  static_cast<unsigned long long>(*hit - modBase));
     log.Info(buf);
 
     const auto refs = FindLeaRefs(text->base, text->size, *hit, 8);
-    snprintf(buf, sizeof(buf), "options: '%s' referenced by %zu code site(s)", anchor, refs.size());
+    std::snprintf(buf, sizeof(buf), "options: '%s' referenced by %zu code site(s)", anchor, refs.size());
     log.Info(buf);
+    size_t logged = 0;
     for (const auto* r : refs) {
-      snprintf(buf, sizeof(buf), "options:   ref @ %p", r);
+      const auto rva = static_cast<unsigned long long>(r - modBase);
+      std::snprintf(buf, sizeof(buf), "options:   ref RVA 0x%llX", rva);
       log.Info(buf);
+      if (logged++ >= 3) continue;  // full window for the first 3 only
+      const size_t avail = text->size - static_cast<size_t>(r - text->base);
+      const FlowInfo flow = WalkFlow(r, 64, avail);
+      for (const auto& in : flow.insns) {
+        std::snprintf(buf, sizeof(buf), "options:     +0x%02zX %-18s", in.offset,
+                      in.text.c_str());
+        log.Info(buf);
+      }
+      for (size_t t : flow.callTargets) {
+        const auto* target = r + t;
+        const bool inModule = target >= modBase && target < modBase + moduleSize;
+        std::snprintf(buf, sizeof(buf), "options:     call -> %s 0x%llX",
+                      inModule ? "RVA" : "outside",
+                      inModule ? static_cast<unsigned long long>(target - modBase)
+                               : static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(target)));
+        log.Info(buf);
+      }
+      for (size_t d : flow.dataRefs) {
+        const auto* ref = r + d;
+        if (ref == *hit) continue;  // the anchor itself
+        const bool inModule = ref >= modBase && ref < modBase + moduleSize;
+        if (!inModule) continue;
+        std::snprintf(buf, sizeof(buf), "options:     data -> RVA 0x%llX",
+                      static_cast<unsigned long long>(ref - modBase));
+        log.Info(buf);
+      }
+      if (flow.truncated) log.Info("options:     (walk stopped: indirect/unknown)");
     }
   }
 

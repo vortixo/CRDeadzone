@@ -6,7 +6,7 @@
     "zh-Hant": "手把死區調整",
     "en": "Controller Deadzone"
   },
-  "version": "1.1.1",
+  "version": "1.1.2",
   "dll": ["CRDeadzone.dll"],
   "options": [
     {"id": "h_movement", "type": "heading",

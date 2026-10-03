@@ -79,6 +79,16 @@ crashing. Attach `crmods/CRDeadzone/CRDeadzone.log` to bug reports.
 Recommended: turn Steam Input **off** for this game so the native path (and
 this mod) sees raw controller values instead of Steam-remapped ones.
 
+## Known limitations (v1.1.x)
+
+- The game applies its own built-in deadzone **after** this mod's layers. The
+  outer threshold always takes effect; the inner deadzone visibly works down
+  to the game's baseline, but lowering it below that baseline needs the
+  built-in value itself overridden. The log's `options:` section records every
+  code site referencing the game's tunables (`deadZone`, `slideDeadzone`,
+  `stickInputPowerFactor`, ...); a named-getter hook is in the works to make
+  the full range effective both ways.
+
 ## Build
 
 Windows (MSVC, x64):

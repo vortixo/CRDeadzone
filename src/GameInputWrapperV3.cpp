@@ -31,6 +31,7 @@ namespace {
 
 const Config* g_cfg = nullptr;
 std::recursive_mutex g_mutex;
+uint64_t g_liveLoggedMs = 0;
 // original-table -> patched copy (shared per version table).
 std::unordered_map<void*, void*> g_patchedTables;
 std::vector<void*> g_allocations;  // process-lifetime; never freed
@@ -169,6 +170,15 @@ bool STDMETHODCALLTYPE DetourGetGamepadState(typename Traits::Reading* self,
     ApplyState(st->leftThumbstickX, st->leftThumbstickY, st->rightThumbstickX,
                st->rightThumbstickY, st->leftTrigger, st->rightTrigger, g_cfg->Get());
     MarkWrapperActive();
+    LARGE_INTEGER f, c;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&c);
+    const uint64_t now = static_cast<uint64_t>(c.QuadPart * 1000 / f.QuadPart);
+    std::lock_guard<std::recursive_mutex> lock(g_mutex);
+    if (now - g_liveLoggedMs > 10000) {
+      g_liveLoggedMs = now;
+      Logger::Instance().Info("gameinput: live, rewriting gamepad state");
+    }
   }
   return ok;
 }

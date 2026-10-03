@@ -30,6 +30,7 @@ void* g_realCloseHandle = nullptr;
 
 std::unordered_set<HANDLE> g_hidHandles;
 std::unordered_set<HANDLE> g_notHid;  // negative cache: ordinary files
+std::unordered_set<HANDLE> g_everLogged;  // closed+reopened handles stay quiet
 
 using ReadFileFn = BOOL(WINAPI*)(HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED);
 using CloseHandleFn = BOOL(WINAPI*)(HANDLE);
@@ -110,10 +111,12 @@ void ClassifyHandle(HANDLE h) {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (collection == 0x04 || collection == 0x05) {
       g_hidHandles.insert(h);
-      char buf[128];
-      std::snprintf(buf, sizeof(buf), "hid: tracking handle %p vid=%04x pid=%04x", h,
-                    attr.VendorID, attr.ProductID);
-      Logger::Instance().Info(buf);
+      if (g_everLogged.insert(h).second) {
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "hid: tracking handle %p vid=%04x pid=%04x", h,
+                      attr.VendorID, attr.ProductID);
+        Logger::Instance().Info(buf);
+      }
     } else {
       g_notHid.insert(h);
     }

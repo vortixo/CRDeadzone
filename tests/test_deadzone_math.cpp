@@ -13,6 +13,7 @@
 #include "Activity.h"
 #include "Config.h"
 #include "DeadzoneMath.h"
+#include "Disasm.h"
 #include "HidMapping.h"
 #include "Logger.h"
 #include "PatternScanner.h"
@@ -241,6 +242,58 @@ void TestConfigFile() {
   std::filesystem::remove_all(dir);
 }
 
+void TestDisasm() {
+  using namespace crdeadzone;
+  // call rel32: E8 <disp> ; target = pos + 5 + disp.
+  {
+    uint8_t code[] = {0xE8, 0xFB, 0x00, 0x00, 0x00, 0xC3};
+    DecodedInsn ins = DecodeOne(code, sizeof(code));
+    Check(ins.length == 5 && ins.isCall && !ins.isRet, "disasm call rel32");
+    Check(ins.relTarget == 5 + 0xFB, "disasm call target math");
+    FlowInfo flow = WalkFlow(code, 16, sizeof(code));
+    Check(flow.callTargets.size() == 1 && flow.insns.back().isRet, "disasm walk call+ret");
+  }
+  // LEA rcx,[rip+disp]: 48 8D 0D <disp32>.
+  {
+    uint8_t code[] = {0x48, 0x8D, 0x0D, 0x10, 0x00, 0x00, 0x00, 0x90};
+    DecodedInsn ins = DecodeOne(code, sizeof(code));
+    Check(ins.length == 7 && ins.hasRipRef, "disasm lea rip");
+    Check(ins.ripTarget == 7 + 0x10, "disasm lea target math");
+    Check(ins.text.find("lea") != std::string::npos, "disasm lea mnemonic");
+  }
+  // push rbp; mov rbp,rsp; pop rbp; ret.
+  {
+    uint8_t code[] = {0x55, 0x48, 0x89, 0xE5, 0x5D, 0xC3};
+    FlowInfo flow = WalkFlow(code, 16, sizeof(code));
+    Check(flow.insns.size() == 4 && flow.insns.back().isRet, "disasm prologue walk");
+    Check(flow.insns[1].length == 3, "disasm rex mov length");
+  }
+  // SIB + disp32: 48 8B 84 25 <disp32> (mov rax,[rbp+disp]).
+  {
+    uint8_t code[] = {0x48, 0x8B, 0x84, 0x25, 0x30, 0x00, 0x00, 0x00};
+    DecodedInsn ins = DecodeOne(code, sizeof(code));
+    Check(ins.length == 8, "disasm sib disp32 length");
+  }
+  // Unknown opcode stops the walk instead of desyncing.
+  {
+    uint8_t code[] = {0x90, 0xF1, 0x90};  // F1 = int1: intentionally unsupported
+    FlowInfo flow = WalkFlow(code, 16, sizeof(code));
+    Check(flow.insns.size() == 1 && flow.truncated, "disasm stops on unknown");
+  }
+  // Indirect call marks stopHere.
+  {
+    uint8_t code[] = {0xFF, 0x15, 0x00, 0x00, 0x00, 0x00};
+    DecodedInsn ins = DecodeOne(code, sizeof(code));
+    Check(ins.length == 6 && ins.stopHere && !ins.isCall, "disasm indirect call stops");
+  }
+  // mov reg,imm32 captures immediates.
+  {
+    uint8_t code[] = {0xB8, 0x9A, 0x99, 0x19, 0x3E, 0xC3};  // mov eax,0x3E19999A
+    DecodedInsn ins = DecodeOne(code, sizeof(code));
+    Check(ins.length == 5 && ins.text.find("imm32") != std::string::npos, "disasm mov imm32");
+  }
+}
+
 void TestLogger() {
   using namespace crdeadzone;
   const auto dir = std::filesystem::temp_directory_path() / "crdeadzone_test_log";
@@ -275,6 +328,7 @@ int main() {
   TestPatternScanner();
   TestConfigFile();
   TestLogger();
+  TestDisasm();
   if (g_fail == 0) {
     std::printf("ALL TESTS PASSED\n");
     return 0;
