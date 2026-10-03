@@ -11,3 +11,4 @@ out/
 # large, and the exe is copyrighted game data.
 miscellaneous/
 ModMenuConfig/
+__pycache__/
