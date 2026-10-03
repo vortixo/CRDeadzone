@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <map>
 #include <string>
 #include <vector>
@@ -93,10 +94,45 @@ void Clustering() {
   EXPECT_TRUE(ClusterCallTargets({}).empty());
 }
 
+void Collection() {
+  // Hand-built fake module (offsets hand-derived, not computed by the
+  // code under test). Break caught: wrong RVA math hooks the wrong
+  // address in-game.
+  //   string "deadZone\0" at 40;
+  //   LEA rcx,[rip+disp] at 8, disp = 40 - (8 + 7) = 25;
+  //   CALL rel32 at 15 targeting 50, rel = 50 - (15 + 5) = 30.
+  std::vector<uint8_t> image(64, 0);
+  const char* name = "deadZone";
+  std::memcpy(image.data() + 40, name, std::strlen(name) + 1);
+  image[8] = 0x48;
+  image[9] = 0x8D;
+  image[10] = 0x0D;
+  const int32_t leaDisp = 25;
+  std::memcpy(image.data() + 11, &leaDisp, 4);
+  image[15] = 0xE8;
+  const int32_t callRel = 30;
+  std::memcpy(image.data() + 16, &callRel, 4);
+  // A second call escaping the module must be dropped, never hooked.
+  image[20] = 0xE8;
+  const int32_t outsideRel = static_cast<int32_t>(200 - (20 + 5));
+  std::memcpy(image.data() + 21, &outsideRel, 4);
+  const ModuleView mod{image.data(), image.size(), image.data(), image.size()};
+  const auto windows = CollectTunableWindows(mod);
+  // Exactly one window (unwatched names are never searched), one target.
+  EXPECT_EQ(windows.size(), size_t{1});
+  const auto it = windows.find("deadZone");
+  EXPECT_TRUE(it != windows.end());
+  EXPECT_EQ(it->second.size(), size_t{1});
+  EXPECT_EQ(it->second[0], uint64_t{50});
+  // Empty view: no windows, no crash.
+  EXPECT_TRUE(CollectTunableWindows(ModuleView{}).empty());
+}
+
 }  // namespace
 
 void TunableTests() {
   crtest::Suite("tunable-watchlist", Watchlist);
   crtest::Suite("tunable-registry", Registry);
   crtest::Suite("tunable-clustering", Clustering);
+  crtest::Suite("tunable-collect", Collection);
 }

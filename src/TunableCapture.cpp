@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cstring>
 
+#include "Disasm.h"
+#include "PatternScanner.h"
+
 namespace crdeadzone {
 
 bool IsWatchedTunable(const char* name) {
@@ -49,6 +52,31 @@ std::vector<RankedTarget> ClusterCallTargets(
     return a.rva < b.rva;
   });
   return ranked;
+}
+
+std::map<std::string, std::vector<uint64_t>> CollectTunableWindows(const ModuleView& mod) {
+  std::map<std::string, std::vector<uint64_t>> windows;
+  if (!mod.base || !mod.text || mod.size == 0 || mod.textSize == 0) return windows;
+  constexpr size_t kMaxRefsPerName = 8;
+  constexpr size_t kWalkBytes = 64;
+  for (size_t i = 0; i < kWatchedTunableCount; ++i) {
+    const char* name = kWatchedTunables[i];
+    const auto anchor = FindStringRef(mod.base, mod.size, name);
+    if (!anchor) continue;
+    const auto refs = FindLeaRefs(mod.text, mod.textSize, *anchor, kMaxRefsPerName);
+    std::vector<uint64_t> targets;
+    for (const uint8_t* ref : refs) {
+      const size_t avail = mod.textSize - static_cast<size_t>(ref - mod.text);
+      const FlowInfo flow = WalkFlow(ref, kWalkBytes, avail);
+      for (size_t t : flow.callTargets) {
+        const uint8_t* target = ref + t;
+        if (target < mod.base || target >= mod.base + mod.size) continue;  // outside module
+        targets.push_back(static_cast<uint64_t>(target - mod.base));
+      }
+    }
+    if (!targets.empty()) windows[name] = std::move(targets);
+  }
+  return windows;
 }
 
 }  // namespace crdeadzone

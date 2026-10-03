@@ -51,4 +51,18 @@ struct RankedTarget {
 std::vector<RankedTarget> ClusterCallTargets(
     const std::map<std::string, std::vector<uint64_t>>& windows);
 
+// A flat view of the game module for anchor scanning. RVAs in the results
+// are offsets from base.
+struct ModuleView {
+  uint8_t* base = nullptr;
+  size_t size = 0;
+  uint8_t* text = nullptr;
+  size_t textSize = 0;
+};
+
+// Collects, per watched tunable, the RVAs of call targets seen in the
+// anchor flow windows (string ref -> LEA refs -> forward walk). Only
+// watched names are searched; targets outside the module are dropped.
+std::map<std::string, std::vector<uint64_t>> CollectTunableWindows(const ModuleView& mod);
+
 }  // namespace crdeadzone
