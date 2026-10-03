@@ -60,21 +60,11 @@ struct ReadingOrig {
 
 void ApplyState(float& lx, float& ly, float& rx, float& ry, float& lt, float& rt,
                 const Settings& s) {
-  const float moveInner = s.movementDeadzone / 100.0f;
-  const float moveOuter = s.movementOuter / 100.0f;
-  const float movePower = CurvePowerForChoice(s.movementCurve, s.customCurvePower);
-  float lookInner = moveInner, lookOuter = moveOuter, lookPower = movePower;
-  if (s.perStick) {
-    lookInner = s.lookDeadzone / 100.0f;
-    lookOuter = s.lookOuter / 100.0f;
-    lookPower = CurvePowerForChoice(s.lookCurve, s.customCurvePower);
-  }
-  ApplyRadialDeadzone(lx, ly, moveInner, moveOuter, movePower);
-  ApplyRadialDeadzone(rx, ry, lookInner, lookOuter, lookPower);
-  const float ltDz = s.triggerLeftDeadzone / 100.0f;
-  const float rtDz = (s.triggerSeparate ? s.triggerRightDeadzone : s.triggerLeftDeadzone) / 100.0f;
-  lt = ApplyTriggerDeadzone(lt, ltDz);
-  rt = ApplyTriggerDeadzone(rt, rtDz);
+  ApplyGamepadState(lx, ly, rx, ry, lt, rt,
+                    MakeGamepadSettings(s.movementDeadzone, s.movementOuter, s.movementCurve,
+                                        s.lookDeadzone, s.lookOuter, s.lookCurve,
+                                        s.triggerLeftDeadzone, s.triggerRightDeadzone,
+                                        s.customCurvePower, s.perStick, s.triggerSeparate));
 }
 
 void* PatchedTable(void* table, size_t count) {

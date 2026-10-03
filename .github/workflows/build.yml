@@ -26,11 +26,14 @@ jobs:
       - name: Validate menu descriptor
         run: python3 tools/validate_menu.py deadzone.menu.json
 
+      - name: Validator self-tests (negative fixtures)
+        run: python3 tools/test_validate_menu.py
+
       - name: Build and run logic tests
         run: |
           g++ -std=c++20 -Wall -Wextra -Werror -Iinclude \
             tests/test_deadzone_math.cpp src/DeadzoneMath.cpp src/Config.cpp \
-            src/HidMapping.cpp src/Activity.cpp \
+            src/HidMapping.cpp src/Activity.cpp src/PatternScanner.cpp src/Logger.cpp \
             -o /tmp/test_deadzone_math
           /tmp/test_deadzone_math
 

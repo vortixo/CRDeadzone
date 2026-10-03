@@ -62,4 +62,44 @@ float CurvePowerForChoice(int choice, int customSlider) {
   }
 }
 
+float XInputShortToFloat(int s) {
+  if (s < -32768) s = -32768;
+  if (s > 32767) s = 32767;
+  return s < 0 ? static_cast<float>(s) / 32768.0f : static_cast<float>(s) / 32767.0f;
+}
+
+int FloatToXInputShort(float f) {
+  if (f > 1.0f) f = 1.0f;
+  if (f < -1.0f) f = -1.0f;
+  return static_cast<int>(f * 32767.0f);
+}
+
+void ApplyGamepadState(float& lx, float& ly, float& rx, float& ry, float& lt, float& rt,
+                       const GamepadSettings& s) {
+  ApplyRadialDeadzone(lx, ly, s.moveInner, s.moveOuter, s.movePower);
+  ApplyRadialDeadzone(rx, ry, s.lookInner, s.lookOuter, s.lookPower);
+  lt = ApplyTriggerDeadzone(lt, s.triggerLeft);
+  rt = ApplyTriggerDeadzone(rt, s.triggerRight);
+}
+
+GamepadSettings MakeGamepadSettings(int moveDz, int moveOuter, int moveCurve, int lookDz,
+                                    int lookOuter, int lookCurve, int trigL, int trigR,
+                                    int customPower, bool perStick, bool trigSeparate) {
+  GamepadSettings s;
+  s.moveInner = moveDz / 100.0f;
+  s.moveOuter = moveOuter / 100.0f;
+  s.movePower = CurvePowerForChoice(moveCurve, customPower);
+  s.lookInner = s.moveInner;
+  s.lookOuter = s.moveOuter;
+  s.lookPower = s.movePower;
+  if (perStick) {
+    s.lookInner = lookDz / 100.0f;
+    s.lookOuter = lookOuter / 100.0f;
+    s.lookPower = CurvePowerForChoice(lookCurve, customPower);
+  }
+  s.triggerLeft = trigL / 100.0f;
+  s.triggerRight = trigSeparate ? trigR / 100.0f : s.triggerLeft;
+  return s;
+}
+
 }  // namespace crdeadzone

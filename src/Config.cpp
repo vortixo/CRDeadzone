@@ -1,6 +1,5 @@
 #include "Config.h"
 
-#include <chrono>
 #include <filesystem>
 #include <fstream>
 
@@ -39,14 +38,21 @@ int Config::ClampInt(int v, int lo, int hi) {
   return v;
 }
 
-uint64_t Config::FileWriteMs(const std::wstring& path) {
-  try {
-    auto t = std::filesystem::last_write_time(path);
-    return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(t.time_since_epoch()).count());
-  } catch (...) {
-    return 0;
+uint64_t Config::FileHash(const std::wstring& path) {
+  std::ifstream f{std::filesystem::path(path), std::ios::binary};
+  if (!f) return 0;
+  std::string bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+  if (bytes.empty()) return 0;
+  return HashBytes(bytes);
+}
+
+uint64_t Config::HashBytes(const std::string& s) {
+  uint64_t h = 1469598103934665603ULL;  // FNV-1a 64
+  for (unsigned char c : s) {
+    h ^= c;
+    h *= 1099511628211ULL;
   }
+  return h == 0 ? 1 : h;  // 0 is reserved for "missing"
 }
 
 void Config::Load() {
@@ -80,13 +86,13 @@ void Config::Load() {
   }
   std::lock_guard<std::mutex> lock(mutex_);
   settings_ = next;
-  lastWriteMs_ = FileWriteMs(iniPath_);
+  lastHash_ = FileHash(iniPath_);
 }
 
 bool Config::PollForChanges(uint64_t /*nowMs*/) {
-  const uint64_t w = FileWriteMs(iniPath_);
+  const uint64_t h = FileHash(iniPath_);
   std::lock_guard<std::mutex> lock(mutex_);
-  if (w != 0 && w != lastWriteMs_) return true;
+  if (h != 0 && h != lastHash_) return true;
   return false;
 }
 

@@ -30,21 +30,23 @@ class Config {
 
   // (Re)loads the INI file. Missing file or keys keep current/default values.
   void Load();
-  // Returns true once when the file changed on disk since the last check.
+  // Returns true once when the file content changed on disk since the last
+  // check. Content-hashed (not mtime), so it is immune to coarse clocks.
   bool PollForChanges(uint64_t nowMs);
   Settings Get() const;
 
   // Pure helpers, unit tested.
   static int ParseInt(const std::string& s, int fallback);
   static int ClampInt(int v, int lo, int hi);
+  static uint64_t HashBytes(const std::string& s);
 
  private:
   std::wstring iniPath_;
   mutable std::mutex mutex_;
   Settings settings_;
-  uint64_t lastWriteMs_ = 0;
+  uint64_t lastHash_ = 0;
 
-  static uint64_t FileWriteMs(const std::wstring& path);
+  static uint64_t FileHash(const std::wstring& path);
 };
 
 }  // namespace crdeadzone

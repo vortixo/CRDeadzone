@@ -27,44 +27,25 @@ using XInputGetStateFn = DWORD(WINAPI*)(DWORD, XINPUT_STATE*);
 XInputGetStateFn g_realGetState = nullptr;
 XInputGetStateFn g_realGetStateEx = nullptr;  // ordinal 100 on xinput1_3
 
-float ShortToFloat(SHORT s) {
-  return s < 0 ? static_cast<float>(s) / 32768.0f : static_cast<float>(s) / 32767.0f;
-}
-
-SHORT FloatToShort(float f) {
-  if (f > 1.0f) f = 1.0f;
-  if (f < -1.0f) f = -1.0f;
-  return static_cast<SHORT>(f * 32767.0f);
-}
-
 void ApplyToGamepad(XINPUT_GAMEPAD& pad, const Settings& s) {
-  const float moveInner = s.movementDeadzone / 100.0f;
-  const float moveOuter = s.movementOuter / 100.0f;
-  const float movePower = CurvePowerForChoice(s.movementCurve, s.customCurvePower);
+  const GamepadSettings gs = MakeGamepadSettings(
+      s.movementDeadzone, s.movementOuter, s.movementCurve, s.lookDeadzone, s.lookOuter,
+      s.lookCurve, s.triggerLeftDeadzone, s.triggerRightDeadzone, s.customCurvePower,
+      s.perStick, s.triggerSeparate);
 
-  float lookInner = moveInner, lookOuter = moveOuter, lookPower = movePower;
-  if (s.perStick) {
-    lookInner = s.lookDeadzone / 100.0f;
-    lookOuter = s.lookOuter / 100.0f;
-    lookPower = CurvePowerForChoice(s.lookCurve, s.customCurvePower);
-  }
-
-  float lx = ShortToFloat(pad.sThumbLX);
-  float ly = ShortToFloat(pad.sThumbLY);
-  ApplyRadialDeadzone(lx, ly, moveInner, moveOuter, movePower);
-  pad.sThumbLX = FloatToShort(lx);
-  pad.sThumbLY = FloatToShort(ly);
-
-  float rx = ShortToFloat(pad.sThumbRX);
-  float ry = ShortToFloat(pad.sThumbRY);
-  ApplyRadialDeadzone(rx, ry, lookInner, lookOuter, lookPower);
-  pad.sThumbRX = FloatToShort(rx);
-  pad.sThumbRY = FloatToShort(ry);
-
-  const float ltDz = s.triggerLeftDeadzone / 100.0f;
-  const float rtDz = (s.triggerSeparate ? s.triggerRightDeadzone : s.triggerLeftDeadzone) / 100.0f;
-  pad.bLeftTrigger = static_cast<BYTE>(ApplyTriggerDeadzone(pad.bLeftTrigger / 255.0f, ltDz) * 255.0f);
-  pad.bRightTrigger = static_cast<BYTE>(ApplyTriggerDeadzone(pad.bRightTrigger / 255.0f, rtDz) * 255.0f);
+  float lx = XInputShortToFloat(pad.sThumbLX);
+  float ly = XInputShortToFloat(pad.sThumbLY);
+  float rx = XInputShortToFloat(pad.sThumbRX);
+  float ry = XInputShortToFloat(pad.sThumbRY);
+  float lt = pad.bLeftTrigger / 255.0f;
+  float rt = pad.bRightTrigger / 255.0f;
+  ApplyGamepadState(lx, ly, rx, ry, lt, rt, gs);
+  pad.sThumbLX = static_cast<SHORT>(FloatToXInputShort(lx));
+  pad.sThumbLY = static_cast<SHORT>(FloatToXInputShort(ly));
+  pad.sThumbRX = static_cast<SHORT>(FloatToXInputShort(rx));
+  pad.sThumbRY = static_cast<SHORT>(FloatToXInputShort(ry));
+  pad.bLeftTrigger = static_cast<BYTE>(lt * 255.0f);
+  pad.bRightTrigger = static_cast<BYTE>(rt * 255.0f);
 }
 
 DWORD WINAPI DetourXInputGetState(DWORD userIndex, XINPUT_STATE* state) {
