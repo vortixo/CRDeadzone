@@ -108,6 +108,13 @@ bool HasDevice(void* key) {
   return g_devices.find(h) != g_devices.end();
 }
 
+bool IsDeviceUsable(void* key) {
+  HANDLE h = static_cast<HANDLE>(key);
+  std::lock_guard<std::mutex> lock(g_mutex);
+  auto it = g_devices.find(h);
+  return it != g_devices.end() && it->second.mapping.usable;
+}
+
 void RemoveDevice(void* key) {
   HANDLE h = static_cast<HANDLE>(key);
   std::lock_guard<std::mutex> lock(g_mutex);
@@ -165,15 +172,14 @@ bool RemapHidReport(void* key, uint8_t* report, size_t len, const Settings& s) {
     dev = &it->second;
   }
   DeviceEntry& e = *dev;
-  const float moveInner = s.movementDeadzone / 100.0f;
-  const float moveOuter = s.movementOuter / 100.0f;
-  const float movePower = CurvePowerForChoice(s.movementCurve, s.customCurvePower);
-  float lookInner = moveInner, lookOuter = moveOuter, lookPower = movePower;
-  if (s.perStick) {
-    lookInner = s.lookDeadzone / 100.0f;
-    lookOuter = s.lookOuter / 100.0f;
-    lookPower = CurvePowerForChoice(s.lookCurve, s.customCurvePower);
-  }
+  // Shared settings mapping: identical to the XInput/GameInput layers so all
+  // layers behave the same (see MakeGamepadSettings).
+  const GamepadSettings gs = MakeGamepadSettings(
+      s.movementDeadzone, s.movementOuter, s.movementCurve, s.lookDeadzone, s.lookOuter,
+      s.lookCurve, s.triggerLeftDeadzone, s.triggerRightDeadzone, s.customCurvePower,
+      s.perStick, s.triggerSeparate);
+  const float moveInner = gs.moveInner, moveOuter = gs.moveOuter, movePower = gs.movePower;
+  const float lookInner = gs.lookInner, lookOuter = gs.lookOuter, lookPower = gs.lookPower;
 
   bool changed = false;
   changed = RemapPair(e, report, len, kX, kY, e.mapping.x, e.mapping.y, moveInner,
@@ -184,19 +190,16 @@ bool RemapHidReport(void* key, uint8_t* report, size_t len, const Settings& s) {
                         lookOuter, lookPower) ||
               changed;
     if (e.mapping.triggersAreRxRy) {
-      const float ltDz = s.triggerLeftDeadzone / 100.0f;
-      const float rtDz =
-          (s.triggerSeparate ? s.triggerRightDeadzone : s.triggerLeftDeadzone) / 100.0f;
       ULONG lt = 0, rt = 0;
       if (ReadUsage(e, report, len, kRx, lt) && ReadUsage(e, report, len, kRy, rt)) {
         const float flt = ApplyTriggerDeadzone(
             HidToUnit(static_cast<int32_t>(lt), e.mapping.rx.logicalMin,
                       e.mapping.rx.logicalMax),
-            ltDz);
+            gs.triggerLeft);
         const float frt = ApplyTriggerDeadzone(
             HidToUnit(static_cast<int32_t>(rt), e.mapping.ry.logicalMin,
                       e.mapping.ry.logicalMax),
-            rtDz);
+            gs.triggerRight);
         changed = WriteUsage(e, report, len, kRx,
                              static_cast<ULONG>(UnitToHid(
                                  flt, e.mapping.rx.logicalMin, e.mapping.rx.logicalMax))) ||

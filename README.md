@@ -8,14 +8,15 @@ instantly; the game never needs a restart.
 
 - Steam version of CONTROL Resonant (tested on 1.4.0, build 25600401)
 - [crloader (ftg DLL Mod Loader)](https://www.nexusmods.com/controlresonant/mods/9) - loads `crmods/*.dll`
-- [CRModMenu](https://www.nexusmods.com/controlresonant/mods/35) v1.2.0+ - renders the in-game settings tab
+- [CRModMenu](https://www.nexusmods.com/controlresonant/mods/35) v1.3.0+ - renders the in-game settings tab
 
 ## Install
 
 1. Install crloader and CRModMenu per their own instructions.
 2. Download `CRDeadzone-vX.Y.Z.zip` from GitHub Releases.
-3. Extract into the game folder so you get `crmods/CRDeadzone/CRDeadzone.dll`,
-   `deadzone.menu.json`, and `ModMenuConfig/`.
+3. Extract the archive into the game folder (the one with
+   CONTROLResonant.exe) so you get `crmods/CRDeadzone/CRDeadzone.dll` and
+   `crmods/CRDeadzone/deadzone.menu.json`.
 4. Launch the game, open Options, switch to the MODS tab, expand
    Controller Deadzone, and tune away.
 
@@ -108,7 +109,7 @@ python3 tools/validate_menu.py deadzone.menu.json
 python3 tools/test_validate_menu.py
 g++ -std=c++20 -Wall -Wextra -Iinclude tests/test_deadzone_math.cpp \
   src/DeadzoneMath.cpp src/Config.cpp src/HidMapping.cpp src/Activity.cpp \
-  src/PatternScanner.cpp src/Logger.cpp -o /tmp/test_deadzone_math
+  src/PatternScanner.cpp src/Logger.cpp src/Disasm.cpp -o /tmp/test_deadzone_math
 /tmp/test_deadzone_math
 ```
 

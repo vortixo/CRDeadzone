@@ -107,9 +107,15 @@ void ClassifyHandle(HANDLE h) {
   if (HidP_GetCaps(ppd, &caps) == HIDP_STATUS_SUCCESS && caps.UsagePage == 0x01) {
     collection = caps.Usage;
   }
+  GetOrAddDevice(h, ppd, false, collection);
+  LogDeviceOnce(h, "hidread", collection);
+  // Only track handles whose report actually carries a stick pair. Anything
+  // else (e.g. a Steam virtual HID with no X/Y usages) is negative-cached so
+  // reads fast-path out and the log says "skipping" instead of "tracking".
+  const bool usable = IsDeviceUsable(h);
   {
     std::lock_guard<std::mutex> lock(g_mutex);
-    if (collection == 0x04 || collection == 0x05) {
+    if (usable) {
       g_hidHandles.insert(h);
       if (g_everLogged.insert(h).second) {
         char buf[128];
@@ -119,10 +125,15 @@ void ClassifyHandle(HANDLE h) {
       }
     } else {
       g_notHid.insert(h);
+      if (g_everLogged.insert(h).second) {
+        char buf[160];
+        std::snprintf(buf, sizeof(buf),
+                      "hid: skipping handle %p vid=%04x pid=%04x collection=%02x (no stick usages)",
+                      h, attr.VendorID, attr.ProductID, collection);
+        Logger::Instance().Info(buf);
+      }
     }
   }
-  GetOrAddDevice(h, ppd, false, collection);
-  LogDeviceOnce(h, "hidread", collection);
 }
 
 BOOL WINAPI DetourReadFile(HANDLE h, LPVOID buf, DWORD toRead, LPDWORD readOut,

@@ -73,7 +73,7 @@ void InitThread() {
   using namespace crdeadzone;
   const std::wstring dir = DllDirectory();
   Logger::Instance().Init(dir);
-  Logger::Instance().Info("CRDeadzone v1.1.2 init (crloader)");
+  Logger::Instance().Info("CRDeadzone v1.1.3 init (crloader)");
 
   {  // Kill switch: drop an empty disabled.txt next to the DLL if a future
     // build ever misbehaves; the mod then logs and installs nothing.

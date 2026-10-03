@@ -353,9 +353,6 @@ DecodedInsn DecodeOne(const uint8_t* base, size_t size) {
     ins.text = buf;
   }
   ins.length = static_cast<uint8_t>(total);
-  if (op == 0xFF && ((modrm >> 3) & 7) >= 2 && ((modrm >> 3) & 7) <= 3) {
-    ins.isCall = true;  // indirect call: target unknown
-  }
   return ins;
 }
 

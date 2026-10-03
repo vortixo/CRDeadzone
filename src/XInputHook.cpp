@@ -43,10 +43,6 @@ void LogLiveThrottled() {
   Logger::Instance().Info("xinput: live, remapping polled state");
 }
 
-using XInputGetStateFn = DWORD(WINAPI*)(DWORD, XINPUT_STATE*);
-XInputGetStateFn g_realGetState = nullptr;
-XInputGetStateFn g_realGetStateEx = nullptr;  // ordinal 100 on xinput1_3
-
 void ApplyToGamepad(XINPUT_GAMEPAD& pad, const Settings& s) {
   const GamepadSettings gs = MakeGamepadSettings(
       s.movementDeadzone, s.movementOuter, s.movementCurve, s.lookDeadzone, s.lookOuter,

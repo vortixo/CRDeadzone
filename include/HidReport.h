@@ -25,5 +25,7 @@ void RemoveDevice(void* key);
 // device is unknown/unusable or the GameInput wrapper is live.
 bool RemapHidReport(void* key, uint8_t* report, size_t len, const Settings& s);
 void LogDeviceOnce(void* key, const char* where, unsigned collection);
+// True when the cached device entry exists and has a usable stick mapping.
+bool IsDeviceUsable(void* key);
 
 }  // namespace crdeadzone

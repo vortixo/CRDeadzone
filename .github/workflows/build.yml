@@ -72,10 +72,13 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Force -Path release/CRDeadzone/ModMenuConfig | Out-Null
-          Copy-Item build/${{ env.BUILD_TYPE }}/CRDeadzone.dll release/CRDeadzone/
-          Copy-Item deadzone.menu.json release/CRDeadzone/
-          Copy-Item README.md release/CRDeadzone/
+          # Zip layout mirrors the game folder: extracting the archive into the
+          # game folder yields crmods/CRDeadzone/... (ModMenuConfig is created
+          # by CRModMenu itself, so it is not shipped).
+          New-Item -ItemType Directory -Force -Path release/crmods/CRDeadzone | Out-Null
+          Copy-Item build/${{ env.BUILD_TYPE }}/CRDeadzone.dll release/crmods/CRDeadzone/
+          Copy-Item deadzone.menu.json release/crmods/CRDeadzone/
+          Copy-Item README.md release/crmods/CRDeadzone/
 
       - name: Create ZIP archive
         shell: pwsh
@@ -83,7 +86,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $tag = '${{ github.ref_name }}'
           if ([string]::IsNullOrWhiteSpace($tag) -or $tag -eq 'github') { $tag = 'dev' }
-          Compress-Archive -Path release/CRDeadzone -DestinationPath "release/CRDeadzone-$tag.zip" -Force
+          Compress-Archive -Path release/crmods -DestinationPath "release/CRDeadzone-$tag.zip" -Force
 
       - name: Upload dev artifact (non-tag builds)
         if: "!startsWith(github.ref, 'refs/tags/')"
