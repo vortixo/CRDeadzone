@@ -1,0 +1,13 @@
+build/
+release/
+*.log
+.vs/
+.vscode/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+out/
+# Local reference material only (game exe + third-party mod zips). Never push:
+# large, and the exe is copyrighted game data.
+miscellaneous/
+ModMenuConfig/

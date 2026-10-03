@@ -1,0 +1,107 @@
+# CRDeadzone - Controller Deadzone Mod for CONTROL Resonant
+
+Adjust controller stick and trigger deadzones **inside the game** through the
+CRModMenu MODS tab. No Steam Input remapping, no external tools. Settings apply
+instantly; the game never needs a restart.
+
+## Requirements
+
+- Steam version of CONTROL Resonant (tested on 1.4.0, build 25600401)
+- [crloader (ftg DLL Mod Loader)](https://www.nexusmods.com/controlresonant/mods/9) - loads `crmods/*.dll`
+- [CRModMenu](https://www.nexusmods.com/controlresonant/mods/35) v1.2.0+ - renders the in-game settings tab
+
+## Install
+
+1. Install crloader and CRModMenu per their own instructions.
+2. Download `CRDeadzone-vX.Y.Z.zip` from GitHub Releases.
+3. Extract into the game folder so you get `crmods/CRDeadzone/CRDeadzone.dll`,
+   `deadzone.menu.json`, and `ModMenuConfig/`.
+4. Launch the game, open Options, switch to the MODS tab, expand
+   Controller Deadzone, and tune away.
+
+Linux / Steam Deck (Proton): set the game's launch options to
+`WINEDLLOVERRIDES="winmm=n,b" %command%` (required by crloader).
+
+## Settings
+
+| Setting | Range | Default | Notes |
+|---|---|---|---|
+| Movement inner deadzone | 0-50% | 15% | Left stick; raise for drift |
+| Movement outer threshold | 50-100% | 100% | Lower if the stick can't reach full deflection |
+| Movement response curve | Linear/Mild/Aggressive/Custom | Linear | Mid-travel shape |
+| Look inner deadzone | 0-50% | 10% | Right stick (camera/aim) |
+| Look outer threshold | 50-100% | 100% | Same as movement |
+| Look response curve | Linear/Mild/Aggressive/Custom | Linear | Same as movement |
+| Left trigger deadzone | 0-50% | 5% | LT activation point |
+| Right trigger deadzone | 0-50% | 5% | RT activation point |
+| Custom curve exponent | 50-300 | 100 | 100 = linear; used by Custom curves |
+| Separate stick settings | on/off | on | Off = look follows movement |
+| Separate trigger settings | on/off | off | Off = RT follows LT |
+
+Sensitivity is **not** duplicated here: the game already exposes stick
+sensitivity in its own options menu.
+
+Values are stored in `crmods/CRDeadzone/ModMenuConfig/crdeadzone.ini` by
+CRModMenu and re-read every 500 ms, so edits (in-game or external) apply live.
+
+## How it works
+
+CONTROL Resonant polls controllers through a GDK GameInput layer
+(`GamepadType::GDK` / `GamepadType::SCE`), direct HID (PlayStation feature
+reports), RawInput (keyboard/mouse), and a single XInput import used for
+rumble/capabilities - there is **no** `XInputGetState` import, so classic
+XInput wrapping alone cannot work. The mod therefore layers:
+
+1. **XInput interception** - hooks `XInputGetState` on every loaded XInput
+   variant plus the undocumented ordinal-100 entry. Fires for any XInput
+   polling path (wrappers, Steam virtual pads). The game's ordinal-2 import
+   is resolved by name at runtime and logged, never assumed.
+2. **GameInput diagnostics** - detects a dynamically loaded GameInput runtime
+   and logs creation calls, proving which input path is live.
+3. **Game tunable discovery (read-only)** - locates the `deadZone`,
+   `slideDeadzone`, `stickInputPowerFactor`, and input-curve anchors in memory
+   and logs every referencing code site. Nothing is written in v1; the log
+   gives exact anchors for validated patches in v1.1.
+
+Everything is signature/address based - no hardcoded offsets. If a game update
+moves things, the affected layer logs the miss and disables itself instead of
+crashing. Attach `crmods/CRDeadzone/CRDeadzone.log` to bug reports.
+
+Recommended: turn Steam Input **off** for this game so the native path (and
+this mod) sees raw controller values instead of Steam-remapped ones.
+
+## Build
+
+Windows (MSVC, x64):
+
+```bat
+cmake -B build -A x64
+cmake --build build --config Release --parallel
+```
+
+MinHook is fetched automatically via CMake FetchContent. Static CRT is used,
+so players need no extra redistributable.
+
+Logic tests + descriptor validation (any platform with g++/python3):
+
+```sh
+python3 tools/validate_menu.py deadzone.menu.json
+g++ -std=c++20 -Wall -Wextra -Iinclude tests/test_deadzone_math.cpp \
+  src/DeadzoneMath.cpp src/Config.cpp -o /tmp/test_deadzone_math
+/tmp/test_deadzone_math
+```
+
+Releases are built by GitHub Actions on every `v*` tag and attached to the
+GitHub Releases tab as `CRDeadzone-<tag>.zip`.
+
+## Troubleshooting
+
+- **No MODS tab**: install CRModMenu, and keep `deadzone.menu.json` next to
+  the DLL (the tab only appears when a supporting mod is installed).
+- **Settings do nothing**: open `CRDeadzone.log` - it states which hooks
+  installed. If nothing installed, paste the log into an issue.
+- **Steam controller glyphs wrong**: unrelated to this mod; see CRModMenu docs.
+
+## License
+
+MIT. MinHook (TsudaKageyu) is fetched at build time under its BSD license.
