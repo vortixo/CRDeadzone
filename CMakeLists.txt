@@ -122,6 +122,7 @@ add_library(CRDeadzone SHARED
   src/Config.cpp
   src/DeadzoneMath.cpp
   src/Logger.cpp
+  src/TunableCapture.cpp
   ${MINHOOK_SOURCES}
 )
 
