@@ -6,6 +6,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <hidusage.h>
 #include <hidpi.h>
 #include <mutex>
 

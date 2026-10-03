@@ -9,8 +9,8 @@ namespace crdeadzone {
 enum class GameInputVersion { Unknown, V1, V2, V3 };
 
 // Inspects a freshly created IGameInput object (typeless), wraps it in place
-// when its version has confirmed vtable layouts (v2/v3), and returns the
-// detected version. Never modifies v0/v1 or unknown objects.
+// when it speaks the confirmed v3 layout, and returns the detected version.
+// Anything else is never modified.
 class Config;
 GameInputVersion ProbeAndWrapObject(void* gameInput, const Config* cfg);
 

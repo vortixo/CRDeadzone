@@ -97,14 +97,6 @@ if(NOT CRDEADZONE_GAMEINPUT_INCLUDE STREQUAL "")
     if(NOT CRDEADZONE_HAVE_GAMEINPUT_V3)
       message(STATUS "GameInput v3 probe failed; v3 wrapping disabled\n${CRDEADZONE_PROBE3_LOG}")
     endif()
-    try_compile(CRDEADZONE_HAVE_GAMEINPUT_V2
-      "${CMAKE_BINARY_DIR}/_giprobe2"
-      "${CMAKE_SOURCE_DIR}/cmake/GameInputProbeV2.cpp"
-      CMAKE_FLAGS "-DINCLUDE_DIRECTORIES=${CRDEADZONE_GAMEINPUT_INCLUDE}"
-      OUTPUT_VARIABLE CRDEADZONE_PROBE2_LOG)
-    if(NOT CRDEADZONE_HAVE_GAMEINPUT_V2)
-      message(STATUS "GameInput v2 probe failed; v2 wrapping disabled\n${CRDEADZONE_PROBE2_LOG}")
-    endif()
   else()
     message(STATUS "GameInput headers present but v3 namespace unusable; wrapping disabled")
   endif()
@@ -143,9 +135,6 @@ if(NOT CRDEADZONE_GAMEINPUT_INCLUDE STREQUAL "")
 endif()
 if(CRDEADZONE_HAVE_GAMEINPUT_V3)
   target_compile_definitions(CRDeadzone PRIVATE CRDEADZONE_HAVE_GAMEINPUT_V3=1)
-endif()
-if(CRDEADZONE_HAVE_GAMEINPUT_V2)
-  target_compile_definitions(CRDeadzone PRIVATE CRDEADZONE_HAVE_GAMEINPUT_V2=1)
 endif()
 
 target_compile_definitions(CRDeadzone PRIVATE

@@ -3,6 +3,8 @@
 #include <windows.h>
 
 #include <MinHook.h>
+
+#include <hidusage.h>
 #include <hidsdi.h>
 
 #include <mutex>

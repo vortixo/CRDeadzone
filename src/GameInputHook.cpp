@@ -45,9 +45,8 @@ HRESULT STDAPICALLTYPE DetourInit(const GUID* riid, void** out) {
   Logger::Instance().Info("gameinput: runtime object created");
   const GameInputVersion v = ProbeAndWrapObject(*out, g_config);
   std::string msg = std::string("gameinput: version ") + VersionName(v);
-  msg += (v == GameInputVersion::V2 || v == GameInputVersion::V3)
-             ? " (wrapped: deadzone active)"
-             : " (pass-through: layouts unconfirmed, HID layers still apply)";
+  msg += (v == GameInputVersion::V3) ? " (wrapped: deadzone active)"
+                                    : " (pass-through: layout unconfirmed, HID layers still apply)";
   Logger::Instance().Info(msg);
   return hr;
 }

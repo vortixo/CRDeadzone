@@ -1,15 +1,15 @@
-// Version-aware GameInput object wrapping (v2/v3, confirmed layouts only).
+// Version-aware GameInput object wrapping (v3, confirmed layout only).
 //
 // Technique: per-object vtable COPY with selective slot patches. No vtables
 // are modified in place, no signatures are guessed: every type comes from the
-// headers (compile-checked), and layouts were asserted by the configure-time
-// probes (cmake/GameInputProbeV*.cpp).
+// headers (compile-checked), and the layout was asserted by the configure-time
+// probe (cmake/GameInputProbeV3.cpp).
 //
 // Confirmed slot map (IUnknown occupies 0-2):
-//   IGameInput v1/v2/v3: 4=GetCurrentReading, 5=GetNextReading,
-//                         6=GetPreviousReading, 7=RegisterReadingCallback
-//   IGameInputReading v2/v3: 18=GetGamepadState
-// (v1 reading order is unconfirmed, v0 entirely: detected, never patched.)
+//   IGameInput v3: 4=GetCurrentReading, 5=GetNextReading,
+//                  6=GetPreviousReading, 7=RegisterReadingCallback
+//   IGameInputReading v3: 18=GetGamepadState
+// (Other API versions: detected, never patched.)
 
 #include "GameInputVersion.h"
 
@@ -196,21 +196,6 @@ struct V3Traits {
   static constexpr size_t kGamepadSlot = 18;
 };
 
-#ifdef CRDEADZONE_HAVE_GAMEINPUT_V2
-struct V2Traits {
-  using GI = GameInput::v2::IGameInput;
-  using Reading = GameInput::v2::IGameInputReading;
-  using Kind = GameInput::v2::GameInputKind;
-  using Device = GameInput::v2::IGameInputDevice;
-  using State = GameInput::v2::GameInputGamepadState;
-  using Callback = GameInput::v2::GameInputReadingCallback;
-  using Token = GameInput::v2::GameInputCallbackToken;
-  static constexpr size_t kGiSlots = 17;
-  static constexpr size_t kReadingSlots = 20;
-  static constexpr size_t kGamepadSlot = 18;
-};
-#endif
-
 template <typename Traits>
 void WrapGi(typename Traits::GI* obj) {
   void** origTable = *reinterpret_cast<void***>(obj);
@@ -247,17 +232,6 @@ GameInputVersion ProbeAndWrapObject(void* obj, const Config* cfg) {
     WrapGi<V3Traits>(static_cast<GameInput::v3::IGameInput*>(obj));
     return GameInputVersion::V3;
   }
-#ifdef CRDEADZONE_HAVE_GAMEINPUT_V2
-  if (SUCCEEDED(unk->QueryInterface(__uuidof(GameInput::v2::IGameInput), &p))) {
-    static_cast<IUnknown*>(p)->Release();
-    WrapGi<V2Traits>(static_cast<GameInput::v2::IGameInput*>(obj));
-    return GameInputVersion::V2;
-  }
-  if (SUCCEEDED(unk->QueryInterface(__uuidof(GameInput::v1::IGameInput), &p))) {
-    static_cast<IUnknown*>(p)->Release();
-    return GameInputVersion::V1;  // detected, reading layout unconfirmed
-  }
-#endif
   return GameInputVersion::Unknown;
 }
 
