@@ -53,7 +53,7 @@ bool SameName(const char* a, const char* b) {
 
 // Patches one named import in the game module's own IAT. No thread freeze:
 // a single pointer write under VirtualProtect.
-bool PatchGameIAT(const char* dllName, const char* funcName, void* detour, void** slotOut,
+bool PatchGameIAT(const char* dllName, const char* funcName, void* detour, void*** slotOut,
                   void** origOut) {
   auto* base = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
   if (!base) return false;
