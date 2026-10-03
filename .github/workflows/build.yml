@@ -23,6 +23,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Reject untracked source files
+        run: |
+          untracked=$(git status --porcelain | grep '^??' || true)
+          if [ -n "$untracked" ]; then
+            echo "Untracked files present (did you forget git add?):"
+            echo "$untracked"
+            exit 1
+          fi
+
       - name: Validate menu descriptor
         run: python3 tools/validate_menu.py deadzone.menu.json
 
