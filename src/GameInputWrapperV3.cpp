@@ -21,7 +21,6 @@
 #include <mutex>
 #include <unordered_map>
 #include <vector>
-
 #include "Activity.h"
 #include "Config.h"
 #include "DeadzoneMath.h"
@@ -31,7 +30,7 @@ namespace crdeadzone {
 namespace {
 
 const Config* g_cfg = nullptr;
-std::mutex g_mutex;
+std::recursive_mutex g_mutex;
 // original-table -> patched copy (shared per version table).
 std::unordered_map<void*, void*> g_patchedTables;
 std::vector<void*> g_allocations;  // process-lifetime; never freed
@@ -118,6 +117,7 @@ bool STDMETHODCALLTYPE DetourGetGamepadState(typename Traits::Reading* self,
 
 template <typename Traits>
 void WrapReading(typename Traits::Reading* reading) {
+  std::lock_guard<std::recursive_mutex> lock(g_mutex);
   void** origTable = *reinterpret_cast<void***>(reading);
   void* patched = PatchedTable(origTable, Traits::kReadingSlots);
   static_cast<void**>(patched)[Traits::kGamepadSlot] =
@@ -198,10 +198,11 @@ struct V3Traits {
 
 template <typename Traits>
 void WrapGi(typename Traits::GI* obj) {
+  std::lock_guard<std::recursive_mutex> lock(g_mutex);
   void** origTable = *reinterpret_cast<void***>(obj);
   void* patched = PatchedTable(origTable, Traits::kGiSlots);
   void** table = static_cast<void**>(patched);
-  // Slots confirmed identical across v1/v2/v3.
+  // Slots confirmed against the v3 headers (see probe + research notes).
   table[4] = reinterpret_cast<void*>(&DetourGetCurrent<Traits>);
   table[5] = reinterpret_cast<void*>(&DetourGetNext<Traits>);
   table[6] = reinterpret_cast<void*>(&DetourGetPrev<Traits>);
@@ -222,7 +223,7 @@ void WrapGi(typename Traits::GI* obj) {
 }  // namespace
 
 GameInputVersion ProbeAndWrapObject(void* obj, const Config* cfg) {
-  std::lock_guard<std::mutex> lock(g_mutex);
+  std::lock_guard<std::recursive_mutex> lock(g_mutex);
   g_cfg = cfg;
   if (!obj) return GameInputVersion::Unknown;
   IUnknown* unk = static_cast<IUnknown*>(obj);
