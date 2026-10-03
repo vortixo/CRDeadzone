@@ -1,13 +1,16 @@
 #pragma once
 
-// GameInput hook layer. CONTROL Resonant polls controllers through GameInput
-// (GamepadType::GDK / GamepadType::SCE in the exe, GameInputCreate import,
-// no XInputGetState import), so this is the primary input path.
+// GameInput high-level layer. CONTROL Resonant ships GDK GameInput statically
+// linked, but GameInput.lib is only a loader shim: polling always goes through
+// the inbox GameInput runtime DLL (GameInputInitialize / v0 GameInputCreate
+// exports). Hooking those exports and wrapping the returned objects covers
+// every controller the runtime supports (GDK and SCE types) with Microsoft's
+// own COM ABI, so game updates cannot break it.
 //
-// Implementation hooks GameInputCreate, captures the IGameInput interface and
-// detours the reading path to apply deadzones. Requires the official
-// GameInput.h from the Windows SDK at build time; otherwise this module
-// compiles to a logged no-op and the XInput + Options paths still work.
+// Version safety: IGameInput/IGameInputReading vtable layouts differ between
+// GameInput API versions. Slots are patched only for versions whose layouts
+// are confirmed (v2/v3); anything else is detected, logged, and passed
+// through untouched.
 
 namespace crdeadzone {
 

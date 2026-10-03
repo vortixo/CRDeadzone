@@ -20,8 +20,10 @@
 
 #include "Config.h"
 #include "GameInputHook.h"
+#include "HidReadHook.h"
 #include "Logger.h"
 #include "OptionsOverride.h"
+#include "RawInputHook.h"
 #include "XInputHook.h"
 
 namespace {
@@ -71,7 +73,7 @@ void InitThread() {
   using namespace crdeadzone;
   const std::wstring dir = DllDirectory();
   Logger::Instance().Init(dir);
-  Logger::Instance().Info("CRDeadzone v1.0.0 init (crloader)");
+  Logger::Instance().Info("CRDeadzone v1.1.0 init (crloader)");
 
   if (MH_Initialize() != MH_OK) {
     Logger::Instance().Error("MinHook init failed; hooks disabled");
@@ -82,19 +84,23 @@ void InitThread() {
 
   // Layer 1: XInput state polling (all variants + ordinal-resolved import).
   bool xinput = InstallXInputHooks(*g_config);
-  // Layer 2: GameInput creation diagnostics.
+  // Layer 2: GameInput runtime wrapping (version-exact, v2/v3).
   bool gameinput = InstallGameInputHooks(*g_config);
-  // Layer 3: read-only discovery of the game's own deadzone tunables.
+  // Layer 3: RawInput HID reports (guaranteed import, usage-based remap).
+  bool rawinput = InstallRawInputHooks(*g_config);
+  // Layer 4: direct-HID ReadFile tracking (usage-based remap).
+  bool hidread = InstallHidReadHooks(*g_config);
+  // Layer 5: read-only discovery of the game's own deadzone tunables.
   DiscoverGameDeadzones();
 
-  if (!xinput && !gameinput) {
+  if (!xinput && !gameinput && !rawinput && !hidread) {
     Logger::Instance().Warn(
-        "no input polling hook installed yet; menu/config still work and late-loaded "
+        "no input hook installed yet; menu/config still work and late-loaded "
         "input DLLs are retried for 60s");
   }
 
   // Live reload: CRModMenu writes the INI on every change; pick it up fast.
-  // Late input DLLs (xinput variants) are retried on the same cadence.
+  // Late input modules (xinput variants, GameInput runtime) are retried too.
   int ticks = 0;
   while (!g_stop.load()) {
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -103,9 +109,15 @@ void InitThread() {
       Logger::Instance().Info("config reloaded (live apply)");
       LogSettings(g_config->Get());
     }
-    if (!xinput && ++ticks < 120) {
-      xinput = InstallXInputHooks(*g_config);
-      if (xinput) Logger::Instance().Info("xinput hook installed on retry");
+    if ((!xinput || !gameinput) && ++ticks < 120) {
+      if (!xinput) {
+        xinput = InstallXInputHooks(*g_config);
+        if (xinput) Logger::Instance().Info("xinput hook installed on retry");
+      }
+      if (!gameinput) {
+        gameinput = InstallGameInputHooks(*g_config);
+        if (gameinput) Logger::Instance().Info("gameinput hook installed on retry");
+      }
     }
   }
 }
@@ -128,6 +140,8 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID /*reserved*/) {
       g_stop.store(true);
       crdeadzone::RemoveXInputHooks();
       crdeadzone::RemoveGameInputHooks();
+      crdeadzone::RemoveRawInputHooks();
+      crdeadzone::RemoveHidReadHooks();
       MH_Uninitialize();
       crdeadzone::Logger::Instance().Shutdown();
       delete g_config;

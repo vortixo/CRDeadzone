@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "Activity.h"
 #include "Config.h"
 #include "DeadzoneMath.h"
 #include "Logger.h"
@@ -68,7 +69,7 @@ void ApplyToGamepad(XINPUT_GAMEPAD& pad, const Settings& s) {
 
 DWORD WINAPI DetourXInputGetState(DWORD userIndex, XINPUT_STATE* state) {
   const DWORD res = g_realGetState(userIndex, state);
-  if (res == ERROR_SUCCESS && state && g_config) {
+  if (res == ERROR_SUCCESS && state && g_config && !WrapperRecentlyActive()) {
     ApplyToGamepad(state->Gamepad, g_config->Get());
   }
   return res;
@@ -76,7 +77,7 @@ DWORD WINAPI DetourXInputGetState(DWORD userIndex, XINPUT_STATE* state) {
 
 DWORD WINAPI DetourXInputGetStateEx(DWORD userIndex, XINPUT_STATE* state) {
   const DWORD res = g_realGetStateEx(userIndex, state);
-  if (res == ERROR_SUCCESS && state && g_config) {
+  if (res == ERROR_SUCCESS && state && g_config && !WrapperRecentlyActive()) {
     ApplyToGamepad(state->Gamepad, g_config->Get());
   }
   return res;

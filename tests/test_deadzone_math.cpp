@@ -1,13 +1,16 @@
-// Portable logic tests: deadzone math + INI parsing helpers.
+// Portable logic tests: deadzone math + INI parsing + HID mapping helpers.
 // Build (Linux/macOS/Windows): g++ -std=c++20 -Iinclude tests/test_deadzone_math.cpp
-//   src/DeadzoneMath.cpp src/Config.cpp -o test_deadzone_math && ./test_deadzone_math
+//   src/DeadzoneMath.cpp src/Config.cpp src/HidMapping.cpp src/Activity.cpp
+//   -o test_deadzone_math && ./test_deadzone_math
 
 #include <cmath>
 #include <cstdio>
 #include <string>
 
+#include "Activity.h"
 #include "Config.h"
 #include "DeadzoneMath.h"
+#include "HidMapping.h"
 
 namespace {
 
@@ -91,6 +94,43 @@ void TestConfigParse() {
   Check(Config::ClampInt(25, 0, 50) == 25, "clamp passthrough");
 }
 
+void TestHidMapping() {
+  using crdeadzone::DecideMapping;
+  auto ds4 = DecideMapping(true, true, true, true, true, true);
+  Check(ds4.usable && ds4.lookUsesZRz && ds4.triggersAreRxRy, "hid mapping full set (DS4)");
+  auto xbox = DecideMapping(true, true, false, true, true, false);
+  Check(xbox.usable && !xbox.lookUsesZRz && !xbox.triggersAreRxRy, "hid mapping X/Y+Rx/Ry");
+  auto noLook = DecideMapping(true, true, false, false, false, false);
+  Check(!noLook.usable, "hid mapping no look pair unusable");
+  auto noMove = DecideMapping(false, true, true, true, true, true);
+  Check(!noMove.usable, "hid mapping no movement pair unusable");
+}
+
+void TestHidNorm() {
+  using namespace crdeadzone;
+  Check(HidToSigned(128, 0, 255) > -0.01f && HidToSigned(128, 0, 255) < 0.01f,
+        "hid center ~= 0");
+  Check(HidToSigned(0, 0, 255) == -1.0f, "hid min -> -1");
+  Check(HidToSigned(255, 0, 255) == 1.0f, "hid max -> 1");
+  Check(HidToUnit(0, 0, 255) == 0.0f && HidToUnit(255, 0, 255) == 1.0f, "hid unit ends");
+  Check(SignedToHid(0.0f, 0, 255) == 127 || SignedToHid(0.0f, 0, 255) == 128,
+        "hid roundtrip center");
+  Check(UnitToHid(1.0f, 0, 255) == 255, "hid roundtrip full");
+  Check(HidToSigned(5, 10, 10) == 0.0f, "hid degenerate range safe");
+}
+
+void TestActivity() {
+  using namespace crdeadzone;
+  SetTickOverride(10000);
+  Check(!WrapperRecentlyActive(), "activity initially idle");
+  MarkWrapperActive();
+  SetTickOverride(11000);
+  Check(WrapperRecentlyActive(), "activity live within window");
+  SetTickOverride(13000);
+  Check(!WrapperRecentlyActive(), "activity expires after window");
+  ClearTickOverride();
+}
+
 }  // namespace
 
 int main() {
@@ -99,6 +139,9 @@ int main() {
   TestTrigger();
   TestCurves();
   TestConfigParse();
+  TestHidMapping();
+  TestHidNorm();
+  TestActivity();
   if (g_fail == 0) {
     std::printf("ALL TESTS PASSED\n");
     return 0;

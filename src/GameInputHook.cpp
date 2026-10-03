@@ -1,30 +1,19 @@
+// GameInput export interception (header-free). Hooks the runtime's creation
+// entry points and delegates version-aware wrapping to ProbeAndWrapObject.
+
 #include "GameInputHook.h"
 
 #include <windows.h>
 
 #include <MinHook.h>
 
-#include <cstdio>
 #include <mutex>
 #include <string>
 
+#include "Activity.h"
 #include "Config.h"
+#include "GameInputVersion.h"
 #include "Logger.h"
-
-// GameInput diagnostic layer (header-free, no assumptions).
-//
-// What the exe analysis showed:
-//  - The game references GameInputCreate but imports no GameInput DLL and has
-//    no delay-load table, so it most likely uses the GDK-static GameInput
-//    (GamepadType::GDK / GamepadType::SCE) and/or direct HID.
-//  - Therefore this module does NOT pretend to rewrite gamepad state. It
-//    detects a dynamically loaded GameInput runtime, intercepts its creation
-//    call to prove which input path is live, and records everything in the
-//    log. The captured evidence drives the v1.1 reading hook.
-//
-// If a future SDK-validated reading wrapper lands, it plugs in here behind
-// CRDEADZONE_HAVE_GAMEINPUT without touching anything else.
-
 namespace crdeadzone {
 namespace {
 
@@ -32,36 +21,59 @@ const Config* g_config = nullptr;
 std::mutex g_mutex;
 bool g_installed = false;
 
-using GameInputCreateFn = HRESULT (*)(void**);
-GameInputCreateFn g_realGameInputCreate = nullptr;
+using InitFn = HRESULT(STDAPICALLTYPE*)(const GUID*, void**);
+using CreateFn = HRESULT(STDAPICALLTYPE*)(void**);
+InitFn g_realInit = nullptr;
+CreateFn g_realCreate = nullptr;
 
-HRESULT DetourGameInputCreate(void** out) {
-  Logger::Instance().Info("gameinput: GameInputCreate called by game");
-  const HRESULT hr = g_realGameInputCreate(out);
-  if (hr >= 0 && out) {
-    char buf[128];
-    snprintf(buf, sizeof(buf), "gameinput: IGameInput created @ %p (hr=0x%08lx)",
-             *out, static_cast<unsigned long>(hr));
-    Logger::Instance().Info(buf);
-  } else {
-    char buf[64];
-    snprintf(buf, sizeof(buf), "gameinput: create failed hr=0x%08lx",
-             static_cast<unsigned long>(hr));
-    Logger::Instance().Warn(buf);
+const char* VersionName(GameInputVersion v) {
+  switch (v) {
+    case GameInputVersion::V1:
+      return "v1";
+    case GameInputVersion::V2:
+      return "v2";
+    case GameInputVersion::V3:
+      return "v3";
+    default:
+      return "unknown/v0";
   }
+}
+
+HRESULT STDAPICALLTYPE DetourInit(const GUID* riid, void** out) {
+  const HRESULT hr = g_realInit(riid, out);
+  if (hr < 0 || !out || !*out) return hr;
+  Logger::Instance().Info("gameinput: runtime object created");
+  const GameInputVersion v = ProbeAndWrapObject(*out, g_config);
+  std::string msg = std::string("gameinput: version ") + VersionName(v);
+  msg += (v == GameInputVersion::V2 || v == GameInputVersion::V3)
+             ? " (wrapped: deadzone active)"
+             : " (pass-through: layouts unconfirmed, HID layers still apply)";
+  Logger::Instance().Info(msg);
   return hr;
 }
 
-void* FindGameInputCreate() {
-  static const wchar_t* kMods[] = {L"GameInput.dll", L"gameinput.dll"};
+HRESULT STDAPICALLTYPE DetourCreate(void** out) {
+  const HRESULT hr = g_realCreate(out);
+  if (hr < 0 || !out || !*out) return hr;
+  Logger::Instance().Info("gameinput: v0-style object created (pass-through, HID layers apply)");
+  ProbeAndWrapObject(*out, g_config);  // detection logging only for unconfirmed layouts
+  return hr;
+}
+
+void* FindExport(const wchar_t* module, const char* name) {
+  HMODULE mod = GetModuleHandleW(module);
+  if (!mod) return nullptr;
+  return reinterpret_cast<void*>(GetProcAddress(mod, name));
+}
+
+void* FindGameInputExport(const char* name) {
+  static const wchar_t* kMods[] = {L"GameInput.dll", L"gameinput.dll",
+                                   L"GameInputRedist.dll", L"gameinputredist.dll"};
   for (const wchar_t* m : kMods) {
-    HMODULE mod = GetModuleHandleW(m);
-    if (!mod) continue;
-    void* p = reinterpret_cast<void*>(GetProcAddress(mod, "GameInputCreate"));
-    if (p) {
+    if (void* p = FindExport(m, name)) {
       std::wstring w(m);
-      Logger::Instance().Info(
-          "gameinput: runtime module present: " + std::string(w.begin(), w.end()));
+      Logger::Instance().Info("gameinput: runtime module present: " +
+                              std::string(w.begin(), w.end()));
       return p;
     }
   }
@@ -73,31 +85,38 @@ void* FindGameInputCreate() {
 bool InstallGameInputHooks(const Config& config) {
   std::lock_guard<std::mutex> lock(g_mutex);
   g_config = &config;
+  (void)g_config;
   if (g_installed) return true;
-  void* target = FindGameInputCreate();
-  if (!target) {
+  bool any = false;
+  if (void* t = FindGameInputExport("GameInputInitialize")) {
+    if (MH_CreateHook(t, reinterpret_cast<void*>(&DetourInit),
+                      reinterpret_cast<void**>(&g_realInit)) == MH_OK &&
+        MH_EnableHook(t) == MH_OK) {
+      Logger::Instance().Info("gameinput: GameInputInitialize hook installed");
+      any = true;
+    }
+  }
+  if (void* t = FindGameInputExport("GameInputCreate")) {
+    if (MH_CreateHook(t, reinterpret_cast<void*>(&DetourCreate),
+                      reinterpret_cast<void**>(&g_realCreate)) == MH_OK &&
+        MH_EnableHook(t) == MH_OK) {
+      Logger::Instance().Info("gameinput: GameInputCreate hook installed");
+      any = true;
+    }
+  }
+  if (!any) {
     Logger::Instance().Info(
-        "gameinput: no dynamic GameInput runtime loaded; game likely uses GDK-static GameInput/HID "
-        "(see options discovery below)");
-    return false;
+        "gameinput: no runtime module loaded yet; polling is GDK-static or HID "
+        "(HID layers still apply, retrying 60s)");
   }
-  if (MH_CreateHook(target, reinterpret_cast<void*>(&DetourGameInputCreate),
-                    reinterpret_cast<void**>(&g_realGameInputCreate)) != MH_OK) {
-    Logger::Instance().Warn("gameinput: MH_CreateHook failed");
-    return false;
-  }
-  if (MH_EnableHook(target) != MH_OK) {
-    Logger::Instance().Warn("gameinput: MH_EnableHook failed");
-    return false;
-  }
-  g_installed = true;
-  Logger::Instance().Info("gameinput: creation hook installed");
-  return true;
+  g_installed = any;
+  return any;
 }
 
 void RemoveGameInputHooks() {
   std::lock_guard<std::mutex> lock(g_mutex);
-  g_realGameInputCreate = nullptr;
+  g_realInit = nullptr;
+  g_realCreate = nullptr;
   g_installed = false;
   g_config = nullptr;
 }

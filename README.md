@@ -50,18 +50,27 @@ CONTROL Resonant polls controllers through a GDK GameInput layer
 (`GamepadType::GDK` / `GamepadType::SCE`), direct HID (PlayStation feature
 reports), RawInput (keyboard/mouse), and a single XInput import used for
 rumble/capabilities - there is **no** `XInputGetState` import, so classic
-XInput wrapping alone cannot work. The mod therefore layers:
+XInput wrapping alone cannot work. The mod therefore layers (first live layer
+wins; the rest stand down automatically so input is never deadzoned twice):
 
-1. **XInput interception** - hooks `XInputGetState` on every loaded XInput
+1. **GameInput wrapper (v2/v3)** - hooks the runtime's `GameInputInitialize`
+   export and wraps returned objects with version-exact vtable copies
+   (slots validated against the Microsoft.GameInput headers at build time).
+   Rewrites `GamepadState` sticks/triggers directly. v0/v1 objects are
+   detected, logged, and passed through.
+2. **RawInput HID remap** - hooks `GetRawInputData` (guaranteed import) and
+   remaps joystick/gamepad HID reports via `HidP_` usage APIs. Mice and
+   keyboards are classified and never touched.
+3. **Direct-HID ReadFile remap** - tracks HID device handles and remaps
+   synchronous reads the same way. Covers polling that bypasses RawInput.
+4. **XInput interception** - hooks `XInputGetState` on every loaded XInput
    variant plus the undocumented ordinal-100 entry. Fires for any XInput
    polling path (wrappers, Steam virtual pads). The game's ordinal-2 import
    is resolved by name at runtime and logged, never assumed.
-2. **GameInput diagnostics** - detects a dynamically loaded GameInput runtime
-   and logs creation calls, proving which input path is live.
-3. **Game tunable discovery (read-only)** - locates the `deadZone`,
+5. **Game tunable discovery (read-only)** - locates the `deadZone`,
    `slideDeadzone`, `stickInputPowerFactor`, and input-curve anchors in memory
-   and logs every referencing code site. Nothing is written in v1; the log
-   gives exact anchors for validated patches in v1.1.
+   and logs every referencing code site. Nothing is written; the log gives
+   exact anchors for validated patches in future versions.
 
 Everything is signature/address based - no hardcoded offsets. If a game update
 moves things, the affected layer logs the miss and disables itself instead of
