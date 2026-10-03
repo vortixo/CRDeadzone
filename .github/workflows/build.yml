@@ -18,10 +18,10 @@ permissions:
 jobs:
   # Portable logic (deadzone math + INI parsing) is standard C++ and tested here.
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Reject untracked source files
         run: |
@@ -57,7 +57,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
@@ -92,7 +92,7 @@ jobs:
 
       - name: Upload dev artifact (non-tag builds)
         if: "!startsWith(github.ref, 'refs/tags/')"
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: CRDeadzone-dev
           path: release/CRDeadzone-*.zip
