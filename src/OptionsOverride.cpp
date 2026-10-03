@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Logger.h"
+#include "Disasm.h"
 #include "PatternScanner.h"
 
 namespace crdeadzone {
@@ -114,8 +115,8 @@ void DiscoverGameDeadzones() {
       const size_t avail = text->size - static_cast<size_t>(r - text->base);
       const FlowInfo flow = WalkFlow(r, 64, avail);
       for (const auto& in : flow.insns) {
-        std::snprintf(buf, sizeof(buf), "options:     +0x%02zX %-18s", in.offset,
-                      in.text.c_str());
+        std::snprintf(buf, sizeof(buf), "options:     +0x%02llX %-18s",
+                      static_cast<unsigned long long>(in.offset), in.text.c_str());
         log.Info(buf);
       }
       for (size_t t : flow.callTargets) {

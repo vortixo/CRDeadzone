@@ -70,9 +70,7 @@ void* FindGameInputExport(const char* name) {
                                    L"GameInputRedist.dll", L"gameinputredist.dll"};
   for (const wchar_t* m : kMods) {
     if (void* p = FindExport(m, name)) {
-      std::wstring w(m);
-      Logger::Instance().Info("gameinput: runtime module present: " +
-                              std::string(w.begin(), w.end()));
+      Logger::Instance().Info(std::string("gameinput: runtime module present: ") + name);
       return p;
     }
   }
