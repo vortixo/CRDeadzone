@@ -128,6 +128,48 @@ void Collection() {
   EXPECT_TRUE(CollectTunableWindows(ModuleView{}).empty());
 }
 
+void HookSelection() {
+  // Break caught: hooking arity-unknown per-name helpers (ranks 2-4) as if
+  // they were the shared binder. Rank 0 always hooks (at most 1 when lone);
+  // lower ranks only with multi-window evidence.
+  const std::vector<RankedTarget> mixed = {
+      {0x1000, 3, {"a", "b", "c"}},
+      {0x2000, 2, {"a", "b"}},
+      {0x3000, 1, {"a"}},
+      {0x4000, 1, {"a"}},
+  };
+  const auto plan = SelectHookTargets(mixed, 4);
+  EXPECT_EQ(plan.hook.size(), size_t{2});
+  EXPECT_EQ(plan.hook[0], uint64_t{0x1000});
+  EXPECT_EQ(plan.hook[1], uint64_t{0x2000});
+  EXPECT_EQ(plan.skipped.size(), size_t{2});
+  EXPECT_EQ(plan.skipped[0], uint64_t{0x3000});
+  EXPECT_EQ(plan.skipped[1], uint64_t{0x4000});
+
+  // Lone-helper result: hook rank 0 only, never the rest.
+  const std::vector<RankedTarget> lone = {
+      {0x1000, 1, {"a"}},
+      {0x2000, 1, {"b"}},
+  };
+  const auto lonePlan = SelectHookTargets(lone, 4);
+  EXPECT_EQ(lonePlan.hook.size(), size_t{1});
+  EXPECT_EQ(lonePlan.hook[0], uint64_t{0x1000});
+  EXPECT_EQ(lonePlan.skipped.size(), size_t{1});
+
+  // Cap respected even when everything qualifies.
+  const std::vector<RankedTarget> many = {
+      {0x1000, 5, {}}, {0x2000, 4, {}}, {0x3000, 3, {}}, {0x4000, 2, {}}, {0x5000, 2, {}},
+  };
+  const auto capped = SelectHookTargets(many, 4);
+  EXPECT_EQ(capped.hook.size(), size_t{4});
+  EXPECT_EQ(capped.skipped.size(), size_t{1});
+  EXPECT_EQ(capped.skipped[0], uint64_t{0x5000});
+
+  // Empty ranking: hook nothing, skip nothing, caller stands down.
+  const auto empty = SelectHookTargets({}, 4);
+  EXPECT_TRUE(empty.hook.empty() && empty.skipped.empty());
+}
+
 }  // namespace
 
 void TunableTests() {
@@ -135,4 +177,5 @@ void TunableTests() {
   crtest::Suite("tunable-registry", Registry);
   crtest::Suite("tunable-clustering", Clustering);
   crtest::Suite("tunable-collect", Collection);
+  crtest::Suite("tunable-hookplan", HookSelection);
 }

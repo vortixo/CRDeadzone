@@ -51,6 +51,17 @@ struct RankedTarget {
 std::vector<RankedTarget> ClusterCallTargets(
     const std::map<std::string, std::vector<uint64_t>>& windows);
 
+// A hook decision over ranked candidates: which RVAs to hook, which to
+// log-but-skip. Rank 0 always hooks when the cap allows (at most 1 target
+// when nothing is shared); lower ranks hook only with multi-window
+// evidence, so arity-unknown per-name helpers stay untouched.
+struct HookPlan {
+  std::vector<uint64_t> hook;
+  std::vector<uint64_t> skipped;
+};
+
+HookPlan SelectHookTargets(const std::vector<RankedTarget>& ranked, size_t maxHooks);
+
 // A flat view of the game module for anchor scanning. RVAs in the results
 // are offsets from base.
 struct ModuleView {

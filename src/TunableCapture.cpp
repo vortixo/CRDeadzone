@@ -54,6 +54,19 @@ std::vector<RankedTarget> ClusterCallTargets(
   return ranked;
 }
 
+HookPlan SelectHookTargets(const std::vector<RankedTarget>& ranked, size_t maxHooks) {
+  HookPlan plan;
+  for (size_t i = 0; i < ranked.size(); ++i) {
+    const bool qualifies = i == 0 || ranked[i].windows >= 2;
+    if (qualifies && plan.hook.size() < maxHooks) {
+      plan.hook.push_back(ranked[i].rva);
+    } else {
+      plan.skipped.push_back(ranked[i].rva);
+    }
+  }
+  return plan;
+}
+
 std::map<std::string, std::vector<uint64_t>> CollectTunableWindows(const ModuleView& mod) {
   std::map<std::string, std::vector<uint64_t>> windows;
   if (!mod.base || !mod.text || mod.size == 0 || mod.textSize == 0) return windows;

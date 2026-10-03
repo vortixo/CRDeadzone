@@ -99,6 +99,7 @@ void LogTunableHit(const char* name, uint64_t rva, void* a, void* b, void* c,
                 static_cast<unsigned long long>(rva), a, b, c, rawName);
   Logger::Instance().Info(buf);
   bool complete = false;
+  size_t captured = 0;
   {
     std::lock_guard<std::mutex> lock(g_captureMutex);
     // Provisional field = rdx (out-param slot at the observed binder sites;
@@ -106,11 +107,16 @@ void LogTunableHit(const char* name, uint64_t rva, void* a, void* b, void* c,
     // Ruling: record rdx, log everything; cost if wrong is ~zero — this
     // build never writes game memory, and the log carries the evidence.
     g_capture.Record(name, b);
-    if (!g_completeLogged && g_capture.Count() >= kWatchedTunableCount) {
+    captured = g_capture.Count();
+    if (!g_completeLogged && captured >= kWatchedTunableCount) {
       g_completeLogged = true;
       complete = true;
     }
   }
+  char cbuf[64];
+  std::snprintf(cbuf, sizeof(cbuf), "tunable: captured %zu/%zu watched", captured,
+                kWatchedTunableCount);
+  Logger::Instance().Info(cbuf);
   if (complete) Logger::Instance().Info("tunable: all watched names captured");
 }
 
@@ -279,20 +285,33 @@ bool InstallTunableCapture() {
   }
 
   size_t hooked = 0;
-  for (const auto& t : ranked) {
-    if (hooked >= kMaxBinderHooks) break;
-    void* target = modBase + t.rva;
+  const HookPlan plan = SelectHookTargets(ranked, kMaxBinderHooks);
+  for (uint64_t rva : plan.skipped) {
+    std::snprintf(buf, sizeof(buf),
+                  "tunable: skipped RVA 0x%llX (single-window helper, arity unknown)",
+                  static_cast<unsigned long long>(rva));
+    log.Info(buf);
+  }
+  for (uint64_t rva : plan.hook) {
+    void* target = modBase + rva;
+    size_t inWindows = 0;
+    for (const auto& t : ranked) {
+      if (t.rva == rva) {
+        inWindows = t.windows;
+        break;
+      }
+    }
     bool ok = false;
     switch (hooked) {
-      case 0: ok = HookBinderSlot<0>(target, t.rva); break;
-      case 1: ok = HookBinderSlot<1>(target, t.rva); break;
-      case 2: ok = HookBinderSlot<2>(target, t.rva); break;
-      case 3: ok = HookBinderSlot<3>(target, t.rva); break;
+      case 0: ok = HookBinderSlot<0>(target, rva); break;
+      case 1: ok = HookBinderSlot<1>(target, rva); break;
+      case 2: ok = HookBinderSlot<2>(target, rva); break;
+      case 3: ok = HookBinderSlot<3>(target, rva); break;
       default: break;
     }
     std::snprintf(buf, sizeof(buf), "tunable: %s RVA 0x%llX (%zu/%zu windows)",
-                  ok ? "hooked" : "HOOK FAILED", static_cast<unsigned long long>(t.rva),
-                  t.windows, kWatchedTunableCount);
+                  ok ? "hooked" : "HOOK FAILED", static_cast<unsigned long long>(rva),
+                  inWindows, kWatchedTunableCount);
     if (ok) {
       log.Info(buf);
       ++hooked;
@@ -306,8 +325,9 @@ bool InstallTunableCapture() {
     return false;
   }
   log.Info(
-      "tunable: capture live (read-only; watched option bindings will be logged, "
-      "0 captures means registration ran before this hook)");
+      "tunable: capture live (read-only). 0 captures so far means either "
+      "registration ran before this hook, or no watched binding has fired "
+      "yet - 'via RVA' lines below are live captures.");
   return true;
 }
 
