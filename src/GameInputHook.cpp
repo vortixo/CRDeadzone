@@ -50,7 +50,8 @@ class GameInputLayer final : public HookLayer, protected MinHookLayerMixin {
     // Hook GameInputInitialize
     if (void* t = FindGameInputExport("GameInputInitialize")) {
       std::error_code ec = CreateAndQueueHook(
-          t, &DetourInit, reinterpret_cast<void**>(&local_real_init), init_hook);
+          t, reinterpret_cast<void*>(&DetourInit),
+          reinterpret_cast<void**>(&local_real_init), init_hook);
       if (!ec) {
         any = true;
       } else {
@@ -61,7 +62,8 @@ class GameInputLayer final : public HookLayer, protected MinHookLayerMixin {
     // Hook GameInputCreate
     if (void* t = FindGameInputExport("GameInputCreate")) {
       std::error_code ec = CreateAndQueueHook(
-          t, &DetourCreate, reinterpret_cast<void**>(&local_real_create), create_hook);
+          t, reinterpret_cast<void*>(&DetourCreate),
+          reinterpret_cast<void**>(&local_real_create), create_hook);
       if (!ec) {
         any = true;
       } else {

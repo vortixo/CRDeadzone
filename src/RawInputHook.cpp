@@ -43,7 +43,7 @@ class RawInputLayer final : public HookLayer, protected MinHookLayerMixin {
     GetRawInputDataFn local_real = nullptr;
 
     std::error_code ec = CreateAndQueueHook(
-        target, &DetourGetRawInputData,
+        target, reinterpret_cast<void*>(&DetourGetRawInputData),
         reinterpret_cast<void**>(&local_real), hook);
     if (ec) {
       Logger::Instance().Warn("Failed to create GetRawInputData hook: {}", ec.message());

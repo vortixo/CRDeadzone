@@ -23,17 +23,17 @@ class Logger {
   // Formatted logging. Single-argument calls use the plain overloads
   // below so braces in game-derived strings are never interpreted.
   template <typename... Args>
-  void Info(std::string_view fmt, Args&&... args) {
+  void Info(std::string_view fmt, Args... args) {
     WriteImpl("INFO", std::vformat(fmt, std::make_format_args(args...)));
   }
 
   template <typename... Args>
-  void Warn(std::string_view fmt, Args&&... args) {
+  void Warn(std::string_view fmt, Args... args) {
     WriteImpl("WARN", std::vformat(fmt, std::make_format_args(args...)));
   }
 
   template <typename... Args>
-  void Error(std::string_view fmt, Args&&... args) {
+  void Error(std::string_view fmt, Args... args) {
     WriteImpl("ERROR", std::vformat(fmt, std::make_format_args(args...)));
   }
 

@@ -12,6 +12,8 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <vector>
 
 namespace crdeadzone {
 
@@ -84,6 +86,11 @@ class HookLayer {
 
 // Mixin for layers that use MinHook and want batch enabling.
 // Provides a HookBatch member and helper to create+queue hooks.
+//
+// Note: the helper takes detours as void* (call sites cast with
+// reinterpret_cast, as with MH_CreateHook itself). A template taking the
+// function type would force the function-pointer -> void* conversion into
+// a dependent context, which MSVC rejects.
 class MinHookLayerMixin {
  protected:
   minhook::HookBatch batch_;
@@ -91,15 +98,8 @@ class MinHookLayerMixin {
 
   // Creates a hook and queues it for batch enable.
   // Returns error_code; on success, hook is created but NOT yet enabled.
-  template <typename Fn>
-  std::error_code CreateAndQueueHook(void* target, Fn detour, void** original_out,
-                                     minhook::HookHandle& handle) {
-    std::error_code ec = handle.Create(target, reinterpret_cast<void*>(detour), original_out);
-    if (ec) return ec;
-    ec = batch_.QueueEnable(handle);
-    if (!ec) hook_targets_.push_back(target);
-    return ec;
-  }
+  std::error_code CreateAndQueueHook(void* target, void* detour, void** original_out,
+                                     minhook::HookHandle& handle);
 
   // Applies all queued hooks. Call after creating all hooks in Install().
   std::error_code ApplyBatch() {

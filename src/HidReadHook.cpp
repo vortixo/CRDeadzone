@@ -26,7 +26,7 @@ class HidReadLayer final : public HookLayer {
 
   bool Install(const Config& config) override {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (installed_) return true;
+    if (IsInstalled()) return true;
 
     SetConfig(&config);
 
