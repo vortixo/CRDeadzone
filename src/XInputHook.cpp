@@ -6,6 +6,7 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 #include "Activity.h"
@@ -26,7 +27,7 @@ class XInputLayer final : public HookLayer, protected MinHookLayerMixin {
 
   bool Install(const Config& config) override {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (installed_) return true;
+    if (IsInstalled()) return true;
 
     SetConfig(&config);
 

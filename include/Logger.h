@@ -1,14 +1,17 @@
 #pragma once
 
 #include <format>
-#include <source_location>
 #include <string>
 #include <string_view>
 
 namespace crdeadzone {
 
 // Thread-safe file logger. The log lives next to the DLL (CRDeadzone.log).
-// Uses std::format (C++20) and std::source_location for automatic context.
+//
+// Formatting goes through std::vformat (runtime format strings) rather
+// than std::format_string: MSVC rejects format_string parameters combined
+// with defaulted trailing arguments, so this spelling compiles on both
+// MSVC and GCC/Clang.
 class Logger {
  public:
   static Logger& Instance();
@@ -17,34 +20,30 @@ class Logger {
   void Init(const std::wstring& directory);
   void Shutdown();
 
-  // Formatted logging with automatic source location.
+  // Formatted logging. Single-argument calls use the plain overloads
+  // below so braces in game-derived strings are never interpreted.
   template <typename... Args>
-  void Info(std::format_string<Args...> fmt, Args&&... args,
-            std::source_location loc = std::source_location::current()) {
-    Write("INFO", std::format(fmt, std::forward<Args>(args)...), loc);
+  void Info(std::string_view fmt, Args&&... args) {
+    WriteImpl("INFO", std::vformat(fmt, std::make_format_args(args...)));
   }
 
   template <typename... Args>
-  void Warn(std::format_string<Args...> fmt, Args&&... args,
-            std::source_location loc = std::source_location::current()) {
-    Write("WARN", std::format(fmt, std::forward<Args>(args)...), loc);
+  void Warn(std::string_view fmt, Args&&... args) {
+    WriteImpl("WARN", std::vformat(fmt, std::make_format_args(args...)));
   }
 
   template <typename... Args>
-  void Error(std::format_string<Args...> fmt, Args&&... args,
-             std::source_location loc = std::source_location::current()) {
-    Write("ERROR", std::format(fmt, std::forward<Args>(args)...), loc);
+  void Error(std::string_view fmt, Args&&... args) {
+    WriteImpl("ERROR", std::vformat(fmt, std::make_format_args(args...)));
   }
 
-  // Legacy non-formatted overloads for gradual migration.
+  // Plain (non-formatted) overloads for pre-built messages.
   void Info(std::string_view msg);
   void Warn(std::string_view msg);
   void Error(std::string_view msg);
 
  private:
   Logger() = default;
-  void Write(std::string_view level, std::string_view msg,
-             std::source_location loc);
 
   // Internal implementation with pre-formatted message.
   void WriteImpl(std::string_view level, std::string_view msg);

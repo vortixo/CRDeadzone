@@ -58,13 +58,6 @@ void Logger::Shutdown() {
   }
 }
 
-void Logger::Write(std::string_view level, std::string_view msg,
-                   std::source_location loc) {
-  // Format with source location: [file:line] message
-  std::string formatted = std::format("[{}:{}] {}", loc.file_name(), loc.line(), msg);
-  WriteImpl(level, formatted);
-}
-
 void Logger::Info(std::string_view msg) { WriteImpl("INFO", msg); }
 void Logger::Warn(std::string_view msg) { WriteImpl("WARN", msg); }
 void Logger::Error(std::string_view msg) { WriteImpl("ERROR", msg); }

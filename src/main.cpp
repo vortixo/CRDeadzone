@@ -156,10 +156,10 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID /*reserved*/) {
       g_stop.store(true);
       // Give init thread a moment to exit cleanly
       Sleep(100);
-      RemoveXInputHooks();
-      RemoveGameInputHooks();
-      RemoveRawInputHooks();
-      RemoveHidReadHooks();
+      crdeadzone::RemoveXInputHooks();
+      crdeadzone::RemoveGameInputHooks();
+      crdeadzone::RemoveRawInputHooks();
+      crdeadzone::RemoveHidReadHooks();
       // MinHookLibrary destructor calls MH_Uninitialize()
       crdeadzone::Logger::Instance().Shutdown();
       break;
