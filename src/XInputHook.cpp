@@ -1,197 +1,223 @@
 #include "XInputHook.h"
 
 #include <windows.h>
-
-#include <MinHook.h>
 #include <XInput.h>
 
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Activity.h"
 #include "Config.h"
 #include "DeadzoneMath.h"
+#include "HookLayer.h"
 #include "Logger.h"
+#include "MinHookWrapper.h"
 
 namespace crdeadzone {
 namespace {
 
-static_assert(sizeof(void*) == 8, "CRDeadzone is x64 only");
-
-const Config* g_config = nullptr;
-std::mutex g_mutex;
-bool g_installed = false;
-uint64_t g_liveLoggedMs = 0;
-
 using XInputGetStateFn = DWORD(WINAPI*)(DWORD, XINPUT_STATE*);
-XInputGetStateFn g_realGetState = nullptr;
-XInputGetStateFn g_realGetStateEx = nullptr;  // ordinal 100 on xinput1_3
 
-uint64_t NowMs() {
-  LARGE_INTEGER f, c;
-  QueryPerformanceFrequency(&f);
-  QueryPerformanceCounter(&c);
-  return static_cast<uint64_t>(c.QuadPart * 1000 / f.QuadPart);
-}
+class XInputLayer final : public HookLayer, protected MinHookLayerMixin {
+ public:
+  std::string_view Name() const override { return "xinput"; }
 
-void LogLiveThrottled() {
-  const uint64_t now = NowMs();
-  std::lock_guard<std::mutex> lock(g_mutex);
-  if (now - g_liveLoggedMs < 10000) return;
-  g_liveLoggedMs = now;
-  Logger::Instance().Info("xinput: live, remapping polled state");
-}
+  bool Install(const Config& config) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (installed_) return true;
 
-void ApplyToGamepad(XINPUT_GAMEPAD& pad, const Settings& s) {
-  const GamepadSettings gs = MakeGamepadSettings(
-      s.movementDeadzone, s.movementOuter, s.movementCurve, s.lookDeadzone, s.lookOuter,
-      s.lookCurve, s.triggerLeftDeadzone, s.triggerRightDeadzone, s.customCurvePower,
-      s.perStick, s.triggerSeparate);
+    SetConfig(&config);
 
-  float lx = XInputShortToFloat(pad.sThumbLX);
-  float ly = XInputShortToFloat(pad.sThumbLY);
-  float rx = XInputShortToFloat(pad.sThumbRX);
-  float ry = XInputShortToFloat(pad.sThumbRY);
-  float lt = pad.bLeftTrigger / 255.0f;
-  float rt = pad.bRightTrigger / 255.0f;
-  ApplyGamepadState(lx, ly, rx, ry, lt, rt, gs);
-  pad.sThumbLX = static_cast<SHORT>(FloatToXInputShort(lx));
-  pad.sThumbLY = static_cast<SHORT>(FloatToXInputShort(ly));
-  pad.sThumbRX = static_cast<SHORT>(FloatToXInputShort(rx));
-  pad.sThumbRY = static_cast<SHORT>(FloatToXInputShort(ry));
-  pad.bLeftTrigger = static_cast<BYTE>(lt * 255.0f);
-  pad.bRightTrigger = static_cast<BYTE>(rt * 255.0f);
-}
+    bool any = false;
 
-DWORD WINAPI DetourXInputGetState(DWORD userIndex, XINPUT_STATE* state) {
-  const DWORD res = g_realGetState(userIndex, state);
-  if (res == ERROR_SUCCESS && state && g_config && !WrapperRecentlyActive()) {
-    ApplyToGamepad(state->Gamepad, g_config->Get());
-    LogLiveThrottled();
-  }
-  return res;
-}
+    // Use local handles and function pointers, only commit on success
+    minhook::HookHandle getstate_hook, getstateex_hook;
+    XInputGetStateFn local_real_getstate = nullptr;
+    XInputGetStateFn local_real_getstateex = nullptr;
 
-DWORD WINAPI DetourXInputGetStateEx(DWORD userIndex, XINPUT_STATE* state) {
-  const DWORD res = g_realGetStateEx(userIndex, state);
-  if (res == ERROR_SUCCESS && state && g_config && !WrapperRecentlyActive()) {
-    ApplyToGamepad(state->Gamepad, g_config->Get());
-    LogLiveThrottled();
-  }
-  return res;
-}
+    // Standard named exports on every XInput variant
+    struct Variant {
+      const wchar_t* dll_name;
+      const char* log_name;
+    };
 
-// Resolves what a DLL's export ordinal actually is, so we never assume
-// "ordinal 2 == XInputGetState". Returns the export name or "".
-std::string ExportNameForOrdinal(HMODULE mod, uint16_t ordinal) {
-  if (!mod) return "";
-  auto* dos = reinterpret_cast<uint8_t*>(mod);
-  if (dos[0] != 'M' || dos[1] != 'Z') return "";
-  const auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(dos + reinterpret_cast<IMAGE_DOS_HEADER*>(dos)->e_lfanew);
-  if (nt->Signature != IMAGE_NT_SIGNATURE) return "";
-  const auto& expDir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
-  if (!expDir.VirtualAddress) return "";
-  const auto* exp = reinterpret_cast<IMAGE_EXPORT_DIRECTORY*>(dos + expDir.VirtualAddress);
-  const uint32_t base = exp->Base;
-  if (ordinal < base || ordinal >= base + exp->NumberOfFunctions) return "";
-  const auto* names = reinterpret_cast<uint32_t*>(dos + exp->AddressOfNames);
-  const auto* ordinals = reinterpret_cast<uint16_t*>(dos + exp->AddressOfNameOrdinals);
-  for (uint32_t i = 0; i < exp->NumberOfNames; ++i) {
-    if (base + ordinals[i] == ordinal) {
-      return reinterpret_cast<const char*>(dos + names[i]);
-    }
-  }
-  return "";
-}
+    const Variant variants[] = {
+        {L"xinput1_4.dll", "xinput1_4!XInputGetState"},
+        {L"xinput1_3.dll", "xinput1_3!XInputGetState"},
+        {L"xinput9_1_0.dll", "xinput9_1_0!XInputGetState"},
+    };
 
-bool HookOne(const wchar_t* dllName, const char* procName, void* detour, void** realOut,
-             const char* logName) {
-  HMODULE mod = GetModuleHandleW(dllName);
-  if (!mod) {
-    Logger::Instance().Info(std::string("xinput: ") + logName + " module not loaded, skipped");
-    return false;
-  }
-  void* target = reinterpret_cast<void*>(GetProcAddress(mod, procName));
-  if (!target) {
-    Logger::Instance().Info(std::string("xinput: ") + logName + " export missing, skipped");
-    return false;
-  }
-  if (MH_CreateHook(target, detour, realOut) != MH_OK) {
-    Logger::Instance().Warn(std::string("xinput: MH_CreateHook failed for ") + logName);
-    return false;
-  }
-  if (MH_EnableHook(target) != MH_OK) {
-    Logger::Instance().Warn(std::string("xinput: MH_EnableHook failed for ") + logName);
-    return false;
-  }
-  Logger::Instance().Info(std::string("xinput: hooked ") + logName);
-  return true;
-}
-
-}  // namespace
-
-bool InstallXInputHooks(const Config& config) {
-  std::lock_guard<std::mutex> lock(g_mutex);
-  g_config = &config;
-  bool any = g_installed;
-
-  if (!g_installed) {
-    // Standard named exports on every XInput variant that provides them.
-    if (!g_realGetState) {
-      if (HookOne(L"xinput1_4.dll", "XInputGetState",
-                   reinterpret_cast<void*>(&DetourXInputGetState),
-                   reinterpret_cast<void**>(&g_realGetState), "xinput1_4!XInputGetState"))
-        any = true;
-    }
-    if (!g_realGetState) {
-      if (HookOne(L"xinput1_3.dll", "XInputGetState",
-                   reinterpret_cast<void*>(&DetourXInputGetState),
-                   reinterpret_cast<void**>(&g_realGetState), "xinput1_3!XInputGetState"))
-        any = true;
-    }
-    if (!g_realGetState) {
-      if (HookOne(L"xinput9_1_0.dll", "XInputGetState",
-                   reinterpret_cast<void*>(&DetourXInputGetState),
-                   reinterpret_cast<void**>(&g_realGetState), "xinput9_1_0!XInputGetState"))
-        any = true;
-    }
-    // Undocumented extended-state entry (ordinal 100, xinput1_3 era).
-    if (!g_realGetStateEx) {
-      HMODULE m13 = GetModuleHandleW(L"xinput1_3.dll");
-      if (m13) {
-        void* target = reinterpret_cast<void*>(GetProcAddress(m13, reinterpret_cast<LPCSTR>(100)));
-        if (target && MH_CreateHook(target, reinterpret_cast<void*>(&DetourXInputGetStateEx),
-                                    reinterpret_cast<void**>(&g_realGetStateEx)) == MH_OK &&
-            MH_EnableHook(target) == MH_OK) {
-          Logger::Instance().Info("xinput: hooked xinput1_3 ordinal 100 (GetStateEx)");
+    for (const auto& v : variants) {
+      if (!local_real_getstate) {
+        std::error_code ec = minhook::CreateHookApi(
+            v.dll_name, "XInputGetState",
+            reinterpret_cast<void*>(&DetourXInputGetState),
+            reinterpret_cast<void**>(&local_real_getstate), getstate_hook);
+        if (!ec) {
+          ec = batch_.QueueEnable(getstate_hook);
+        }
+        if (!ec) {
           any = true;
+          Logger::Instance().Info("Hooked {}", v.log_name);
+        } else {
+          Logger::Instance().Warn("Failed to hook {}: {}", v.log_name, ec.message());
         }
       }
     }
-    g_installed = any;
+
+    // Undocumented extended-state entry (ordinal 100, xinput1_3 era)
+    if (!local_real_getstateex) {
+      std::error_code ec = minhook::CreateHookOrdinal(
+          L"xinput1_3.dll", 100,
+          reinterpret_cast<void*>(&DetourXInputGetStateEx),
+          reinterpret_cast<void**>(&local_real_getstateex), getstateex_hook);
+      if (!ec) {
+        ec = batch_.QueueEnable(getstateex_hook);
+      }
+      if (!ec) {
+        any = true;
+        Logger::Instance().Info("Hooked xinput1_3 ordinal 100 (GetStateEx)");
+      } else {
+        Logger::Instance().Warn("Failed to hook xinput1_3 ordinal 100: {}", ec.message());
+      }
+    }
+
+    if (any) {
+      std::error_code ec = ApplyBatch();
+      if (ec) {
+        Logger::Instance().Error("Failed to enable XInput hooks: {}", ec.message());
+        DisableAll();
+        // Local handles go out of scope and clean up automatically
+        any = false;
+      } else {
+        // Success: move handles and function pointers to members
+        getstate_hook_ = std::move(getstate_hook);
+        getstateex_hook_ = std::move(getstateex_hook);
+        real_getstate_ = local_real_getstate;
+        real_getstateex_ = local_real_getstateex;
+      }
+    }
+
+    // Diagnostics: identify the game's single ordinal-2 XInput import
+    if (HMODULE m14 = GetModuleHandleW(L"XINPUT1_4.dll")) {
+      const std::string name = ExportNameForOrdinal(m14, 2);
+      Logger::Instance().Info("XINPUT1_4 ordinal 2 resolves to '{}'", name);
+    }
+
+    if (!any) {
+      Logger::Instance().Info(
+          "No state polling hook installed (game likely polls via GameInput/HID)");
+    }
+
+    MarkInstalled(any);
+    return any;
   }
 
-  // Diagnostics: identify the game's single ordinal-2 XInput import so future
-  // versions stay correct without guessing.
-  HMODULE m14 = GetModuleHandleW(L"XINPUT1_4.dll");
-  if (m14) {
-    const std::string name = ExportNameForOrdinal(m14, 2);
-    Logger::Instance().Info("xinput: XINPUT1_4 ordinal 2 resolves to '" + name + "'");
+  void PollRetry(const Config& config) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (installed_) return;
+    SetConfig(&config);
+    Install(config);  // Reuse install logic
   }
-  if (!any) {
-    Logger::Instance().Info("xinput: no state polling hook installed (game likely polls via GameInput/HID)");
+
+  void Remove() override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    DisableAll();
+    getstate_hook_.Reset();
+    getstateex_hook_.Reset();
+    real_getstate_ = nullptr;
+    real_getstateex_ = nullptr;
+    ClearConfig();
+    MarkInstalled(false);
   }
-  return any;
+
+ private:
+  std::mutex mutex_;
+  XInputGetStateFn real_getstate_ = nullptr;
+  XInputGetStateFn real_getstateex_ = nullptr;
+  minhook::HookHandle getstate_hook_;
+  minhook::HookHandle getstateex_hook_;
+
+  // Resolves what a DLL's export ordinal actually is
+  static std::string ExportNameForOrdinal(HMODULE mod, uint16_t ordinal) {
+    if (!mod) return "";
+    auto* dos = reinterpret_cast<uint8_t*>(mod);
+    if (dos[0] != 'M' || dos[1] != 'Z') return "";
+    const auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(dos + reinterpret_cast<IMAGE_DOS_HEADER*>(dos)->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return "";
+    const auto& expDir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+    if (!expDir.VirtualAddress) return "";
+    const auto* exp = reinterpret_cast<IMAGE_EXPORT_DIRECTORY*>(dos + expDir.VirtualAddress);
+    const uint32_t base = exp->Base;
+    if (ordinal < base || ordinal >= base + exp->NumberOfFunctions) return "";
+    const auto* names = reinterpret_cast<uint32_t*>(dos + exp->AddressOfNames);
+    const auto* ordinals = reinterpret_cast<uint16_t*>(dos + exp->AddressOfNameOrdinals);
+    for (uint32_t i = 0; i < exp->NumberOfNames; ++i) {
+      if (base + ordinals[i] == ordinal) {
+        return reinterpret_cast<const char*>(dos + names[i]);
+      }
+    }
+    return "";
+  }
+
+  // Apply deadzone to gamepad state
+  static void ApplyToGamepad(XINPUT_GAMEPAD& pad, const Settings& s) {
+    const GamepadSettings gs = MakeGamepadSettings(
+        s.movementDeadzone, s.movementOuter, s.movementCurve, s.lookDeadzone, s.lookOuter,
+        s.lookCurve, s.triggerLeftDeadzone, s.triggerRightDeadzone, s.customCurvePower,
+        s.perStick, s.triggerSeparate);
+
+    float lx = XInputShortToFloat(pad.sThumbLX);
+    float ly = XInputShortToFloat(pad.sThumbLY);
+    float rx = XInputShortToFloat(pad.sThumbRX);
+    float ry = XInputShortToFloat(pad.sThumbRY);
+    float lt = pad.bLeftTrigger / 255.0f;
+    float rt = pad.bRightTrigger / 255.0f;
+    ApplyGamepadState(lx, ly, rx, ry, lt, rt, gs);
+    pad.sThumbLX = static_cast<SHORT>(FloatToXInputShort(lx));
+    pad.sThumbLY = static_cast<SHORT>(FloatToXInputShort(ly));
+    pad.sThumbRX = static_cast<SHORT>(FloatToXInputShort(rx));
+    pad.sThumbRY = static_cast<SHORT>(FloatToXInputShort(ry));
+    pad.bLeftTrigger = static_cast<BYTE>(lt * 255.0f);
+    pad.bRightTrigger = static_cast<BYTE>(rt * 255.0f);
+  }
+
+  static DWORD WINAPI DetourXInputGetState(DWORD userIndex, XINPUT_STATE* state) {
+    auto& layer = Instance();
+    const DWORD res = layer.real_getstate_(userIndex, state);
+    if (res == ERROR_SUCCESS && state && layer.ConfigPtr() && !WrapperRecentlyActive()) {
+      ApplyToGamepad(state->Gamepad, layer.ConfigPtr()->Get());
+      layer.LogThrottled("live, remapping polled state");
+    }
+    return res;
+  }
+
+  static DWORD WINAPI DetourXInputGetStateEx(DWORD userIndex, XINPUT_STATE* state) {
+    auto& layer = Instance();
+    const DWORD res = layer.real_getstateex_(userIndex, state);
+    if (res == ERROR_SUCCESS && state && layer.ConfigPtr() && !WrapperRecentlyActive()) {
+      ApplyToGamepad(state->Gamepad, layer.ConfigPtr()->Get());
+      layer.LogThrottled("live (ex), remapping polled state");
+    }
+    return res;
+  }
+
+  static XInputLayer& Instance() {
+    static XInputLayer instance;
+    return instance;
+  }
+};
+
+XInputLayer g_layer;
+
+bool InstallXInputHooks(const Config& config) {
+  return g_layer.Install(config);
 }
 
 void RemoveXInputHooks() {
-  std::lock_guard<std::mutex> lock(g_mutex);
-  MH_DisableHook(MH_ALL_HOOKS);
-  g_realGetState = nullptr;
-  g_realGetStateEx = nullptr;
-  g_installed = false;
-  g_config = nullptr;
+  g_layer.Remove();
 }
 
 }  // namespace crdeadzone

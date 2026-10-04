@@ -123,6 +123,7 @@ add_library(CRDeadzone SHARED
   src/DeadzoneMath.cpp
   src/Logger.cpp
   src/TunableCapture.cpp
+  src/MinHookWrapper.cpp
   ${MINHOOK_SOURCES}
 )
 

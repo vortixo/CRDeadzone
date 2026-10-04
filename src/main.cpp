@@ -9,21 +9,22 @@
 
 #include <windows.h>
 
-#include <MinHook.h>
-
 #include <atomic>
 #include <chrono>
-#include <cstdio>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "Config.h"
 #include "GameInputHook.h"
 #include "HidReadHook.h"
 #include "Logger.h"
+#include "MinHookWrapper.h"
 #include "OptionsOverride.h"
 #include "RawInputHook.h"
+#include "TunableCapture.h"
 #include "XInputHook.h"
 
 namespace {
@@ -32,7 +33,6 @@ constexpr const wchar_t* kIniFile = L"crdeadzone.ini";  // matches menu id "crde
 
 HMODULE g_module = nullptr;
 std::atomic<bool> g_stop{false};
-crdeadzone::Config* g_config = nullptr;
 
 std::wstring DllDirectory() {
   wchar_t path[MAX_PATH] = {};
@@ -59,24 +59,25 @@ std::wstring PickIniPath(const std::wstring& dllDir) {
 }
 
 void LogSettings(const crdeadzone::Settings& s) {
-  char buf[256];
-  std::snprintf(buf, sizeof(buf),
-                "config: move(dz=%d outer=%d curve=%d) look(dz=%d outer=%d curve=%d) "
-                "trig(L=%d R=%d) custom=%d perStick=%d trigSep=%d",
-                s.movementDeadzone, s.movementOuter, s.movementCurve, s.lookDeadzone,
-                s.lookOuter, s.lookCurve, s.triggerLeftDeadzone, s.triggerRightDeadzone,
-                s.customCurvePower, s.perStick ? 1 : 0, s.triggerSeparate ? 1 : 0);
-  crdeadzone::Logger::Instance().Info(buf);
+  crdeadzone::Logger::Instance().Info(
+      "config: move(dz={} outer={} curve={}) look(dz={} outer={} curve={}) "
+      "trig(L={} R={}) custom={} perStick={} trigSep={}",
+      s.movementDeadzone, s.movementOuter, s.movementCurve,
+      s.lookDeadzone, s.lookOuter, s.lookCurve,
+      s.triggerLeftDeadzone, s.triggerRightDeadzone,
+      s.customCurvePower, s.perStick ? 1 : 0, s.triggerSeparate ? 1 : 0);
 }
 
 void InitThread() {
   using namespace crdeadzone;
+
   const std::wstring dir = DllDirectory();
   Logger::Instance().Init(dir);
   Logger::Instance().Info("CRDeadzone v1.2.0 init (crloader)");
 
-  {  // Kill switch: drop an empty disabled.txt next to the DLL if a future
-    // build ever misbehaves; the mod then logs and installs nothing.
+  // Kill switch: drop an empty disabled.txt next to the DLL if a future
+  // build ever misbehaves; the mod then logs and installs nothing.
+  {
     std::error_code ec;
     if (std::filesystem::exists(std::filesystem::path(dir) / "disabled.txt", ec)) {
       Logger::Instance().Warn("disabled.txt present: hooks not installed");
@@ -84,30 +85,30 @@ void InitThread() {
     }
   }
 
-  if (MH_Initialize() != MH_OK) {
-    Logger::Instance().Error("MinHook init failed; hooks disabled");
-  }
+  // Initialize MinHook library (RAII wrapper handles cleanup)
+  minhook::MinHookLibrary minhook_lib;
 
   // Read-only recon first: catches option registration while it happens.
-  crdeadzone::InstallTunableCapture();
+  InstallTunableCapture();
 
-  g_config = new Config(PickIniPath(dir));
-  LogSettings(g_config->Get());
+  // Configuration (polled for live reload)
+  auto config = std::make_unique<Config>(PickIniPath(dir));
+  LogSettings(config->Get());
 
   // Layer 1: XInput state polling (all variants + ordinal-resolved import).
-  bool xinput = InstallXInputHooks(*g_config);
+  bool xinput = InstallXInputHooks(*config);
   // Layer 2: GameInput runtime wrapping (version-exact, v2/v3).
-  bool gameinput = InstallGameInputHooks(*g_config);
+  bool gameinput = InstallGameInputHooks(*config);
   // Layer 3: RawInput HID reports (guaranteed import, usage-based remap).
-  bool rawinput = InstallRawInputHooks(*g_config);
+  bool rawinput = InstallRawInputHooks(*config);
   // Layer 4: direct-HID ReadFile tracking (usage-based remap).
-  bool hidread = InstallHidReadHooks(*g_config);
+  bool hidread = InstallHidReadHooks(*config);
   // Layer 5: read-only discovery of the game's own deadzone tunables.
   DiscoverGameDeadzones();
 
   if (!xinput && !gameinput && !rawinput && !hidread) {
     Logger::Instance().Warn(
-        "no input hook installed yet; menu/config still work and late-loaded "
+        "No input hook installed yet; menu/config still work and late-loaded "
         "input DLLs are retried for 60s");
   }
 
@@ -116,18 +117,21 @@ void InitThread() {
   int ticks = 0;
   while (!g_stop.load()) {
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    if (g_config->PollForChanges(0)) {
-      g_config->Load();
+
+    if (config->PollForChanges(0)) {
+      config->Load();
       Logger::Instance().Info("config reloaded (live apply)");
-      LogSettings(g_config->Get());
+      LogSettings(config->Get());
     }
-    if ((!xinput || !gameinput) && ++ticks < 120) {
+
+    // Retry layers that may not have installed yet (late-loaded DLLs)
+    if ((!xinput || !gameinput) && ++ticks < 120) {  // 60 seconds
       if (!xinput) {
-        xinput = InstallXInputHooks(*g_config);
+        xinput = InstallXInputHooks(*config);
         if (xinput) Logger::Instance().Info("xinput hook installed on retry");
       }
       if (!gameinput) {
-        gameinput = InstallGameInputHooks(*g_config);
+        gameinput = InstallGameInputHooks(*config);
         if (gameinput) Logger::Instance().Info("gameinput hook installed on retry");
       }
     }
@@ -150,14 +154,14 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID /*reserved*/) {
       break;
     case DLL_PROCESS_DETACH:
       g_stop.store(true);
-      crdeadzone::RemoveXInputHooks();
-      crdeadzone::RemoveGameInputHooks();
-      crdeadzone::RemoveRawInputHooks();
-      crdeadzone::RemoveHidReadHooks();
-      MH_Uninitialize();
+      // Give init thread a moment to exit cleanly
+      Sleep(100);
+      RemoveXInputHooks();
+      RemoveGameInputHooks();
+      RemoveRawInputHooks();
+      RemoveHidReadHooks();
+      // MinHookLibrary destructor calls MH_Uninitialize()
       crdeadzone::Logger::Instance().Shutdown();
-      delete g_config;
-      g_config = nullptr;
       break;
   }
   return TRUE;
