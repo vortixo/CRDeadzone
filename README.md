@@ -7,7 +7,7 @@ instantly; the game never needs a restart.
 ## Requirements
 
 - Steam version of CONTROL Resonant (tested on 1.4.0, build 25600401)
-- [crloader (ftg DLL Mod Loader)](https://www.nexusmods.com/controlresonant/mods/9) - loads `crmods/*.dll`
+- [crloader](https://www.nexusmods.com/controlresonant/mods/9) - loads `crmods/*.dll`
 - [CRModMenu](https://www.nexusmods.com/controlresonant/mods/35) v1.3.0+ - renders the in-game settings tab
 
 ## Install
@@ -47,54 +47,34 @@ CRModMenu and re-read every 500 ms, so edits (in-game or external) apply live.
 
 ## How it works
 
-CONTROL Resonant polls controllers through a GDK GameInput layer
-(`GamepadType::GDK` / `GamepadType::SCE`), direct HID (PlayStation feature
-reports), RawInput (keyboard/mouse), and a single XInput import used for
-rumble/capabilities - there is **no** `XInputGetState` import, so classic
-XInput wrapping alone cannot work. The mod therefore layers (first live layer
-wins; the rest stand down automatically so input is never deadzoned twice):
+The game polls controllers through several paths (GameInput, HID,
+RawInput, XInput), so the mod layers hooks — first live layer wins, the
+rest stand down so input is never deadzoned twice:
 
-1. **GameInput wrapper (v2/v3)** - hooks the runtime's `GameInputInitialize`
-   export and wraps returned objects with version-exact vtable copies
-   (slots validated against the Microsoft.GameInput headers at build time).
-   Rewrites `GamepadState` sticks/triggers directly. v0/v1 objects are
-   detected, logged, and passed through.
-2. **RawInput HID remap** - hooks `GetRawInputData` (guaranteed import) and
-   remaps joystick/gamepad HID reports via `HidP_` usage APIs. Mice and
-   keyboards are classified and never touched.
-3. **Direct-HID ReadFile remap** - tracks HID device handles and remaps
-   synchronous reads the same way. Covers polling that bypasses RawInput.
-4. **XInput interception** - hooks `XInputGetState` on every loaded XInput
-   variant plus the undocumented ordinal-100 entry. Fires for any XInput
-   polling path (wrappers, Steam virtual pads). The game's ordinal-2 import
-   is resolved by name at runtime and logged, never assumed.
-5. **Game tunable capture (read-only, v1.2.0+)** - clusters the call
-   targets in the anchor flow windows (the shared binder ranks above
-   per-name helpers) and hooks the top candidates with passthrough
-   detours. Bindings of `deadZone`, `slideDeadzone`,
-   `stickInputPowerFactor` and the input curves are logged with their
-   game-side addresses. Nothing is written; the log tells the next
-   version exactly where to apply your values, on every input path.
+1. **GameInput wrapper (v2/v3)** - rewrites `GamepadState` sticks/triggers.
+2. **RawInput HID remap** - remaps joystick/gamepad HID reports in place.
+3. **Direct-HID ReadFile remap** - covers polling that bypasses RawInput.
+4. **XInput interception** - covers XInput polling paths and Steam virtual pads.
+5. **Game tunable capture (read-only)** - logs where the game's own
+   `deadZone` / `slideDeadzone` / `stickInputPowerFactor` tunables live,
+   so a later version can drive them directly.
 
-Everything is signature/address based - no hardcoded offsets. If a game update
-moves things, the affected layer logs the miss and disables itself instead of
-crashing. Attach `crmods/CRDeadzone/CRDeadzone.log` to bug reports.
+Details: [docs/architecture.md](docs/architecture.md).
+Input-system research notes: [docs/input-research.md](docs/input-research.md).
 
 Recommended: turn Steam Input **off** for this game so the native path (and
 this mod) sees raw controller values instead of Steam-remapped ones.
-Note Steam Input applies its own deadzone *before* the game (and this mod)
-sees anything: with it on, lowering the inner deadzone below Steam's floor
-changes nothing, by design of Steam, not of this mod.
+Steam Input applies its own deadzone *before* the game sees anything:
+with it on, lowering the inner deadzone below Steam's floor changes
+nothing, by design of Steam, not of this mod.
 
-## Known limitations (v1.1.x)
+## Known limitations
 
-- The game applies its own built-in deadzone **after** this mod's layers. The
-  outer threshold always takes effect; the inner deadzone visibly works down
-  to the game's baseline, but lowering it below that baseline needs the
-  built-in value itself overridden. The log's `options:` section records every
-  code site referencing the game's tunables (`deadZone`, `slideDeadzone`,
-  `stickInputPowerFactor`, ...); a named-getter hook is in the works to make
-  the full range effective both ways.
+- The game applies its own built-in deadzone **after** this mod's layers.
+  The outer threshold always takes effect; the inner deadzone visibly
+  works down to the game's baseline. Overriding the built-in value itself
+  (via the captured tunables above) is planned to make the full range
+  effective both ways.
 
 ## Build
 
@@ -134,6 +114,16 @@ GitHub Releases tab as `CRDeadzone-<tag>.zip`.
   `crmods/CRDeadzone/disabled.txt` to make the DLL log and exit without
   hooking anything, then report with the log attached.
 - **Steam controller glyphs wrong**: unrelated to this mod; see CRModMenu docs.
+
+## Credits
+
+- [MinHook](https://github.com/TsudaKageyu/minhook) by TsudaKageyu (BSD license) - API hooking, fetched at build time
+- [crloader](https://www.nexusmods.com/controlresonant/mods/9) by fame2gin - DLL mod loader
+- [CRModMenu](https://www.nexusmods.com/controlresonant/mods/35) by kkyleeb21 - in-game settings tab
+- [Microsoft.GameInput](https://www.nuget.org/packages/Microsoft.GameInput/) (NuGet) - version-exact GameInput headers for build-time vtable validation
+- [Microsoft Win32 Raw Input / HID documentation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getrawinputdata) (`GetRawInputData`, `RAWINPUT`/`RIM_TYPEHID`, HID APIs)
+- [SpecialK](https://wiki.special-k.info/en/Advanced/Input) by Kaldaien - prior art on separating input APIs (XInput / libScePad / HID) per game
+- DualSense HID layout: [`nondebug/dualsense`](https://github.com/nondebug/dualsense) report descriptor and Linux `hid-playstation.c` (Sony Interactive Entertainment, GPL-2.0)
 
 ## License
 

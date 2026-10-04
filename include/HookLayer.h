@@ -27,10 +27,6 @@ class HookLayer {
   // Remove all hooks. Called from DllMain on process detach.
   virtual void Remove() = 0;
 
-  // Poll for late-loaded modules. Called periodically from init thread.
-  // Default: no-op. Override for layers that retry (XInput, GameInput).
-  virtual void PollRetry(const Config& config) {}
-
   // Human-readable layer name for logging.
   virtual std::string_view Name() const = 0;
 

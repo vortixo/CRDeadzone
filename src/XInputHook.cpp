@@ -115,13 +115,6 @@ class XInputLayer final : public HookLayer, protected MinHookLayerMixin {
     return any;
   }
 
-  void PollRetry(const Config& config) override {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (installed_) return;
-    SetConfig(&config);
-    Install(config);  // Reuse install logic
-  }
-
   void Remove() override {
     std::lock_guard<std::mutex> lock(mutex_);
     DisableAll();
