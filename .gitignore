@@ -1,6 +1,8 @@
 build/
 release/
 *.log
+*.o
+*.obj
 .vs/
 .vscode/
 CMakeFiles/
