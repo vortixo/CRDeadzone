@@ -143,4 +143,5 @@ void RemoveRawInputHooks() {
   g_layer.Remove();
 }
 
+}  // namespace
 }  // namespace crdeadzone

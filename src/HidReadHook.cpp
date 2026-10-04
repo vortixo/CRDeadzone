@@ -218,4 +218,5 @@ void RemoveHidReadHooks() {
   g_layer.Remove();
 }
 
+}  // namespace
 }  // namespace crdeadzone

@@ -214,4 +214,5 @@ void RemoveXInputHooks() {
   g_layer.Remove();
 }
 
+}  // namespace
 }  // namespace crdeadzone

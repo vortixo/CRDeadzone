@@ -175,4 +175,5 @@ void RemoveGameInputHooks() {
   g_layer.Remove();
 }
 
+}  // namespace
 }  // namespace crdeadzone
