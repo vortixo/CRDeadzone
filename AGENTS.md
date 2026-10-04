@@ -20,8 +20,9 @@ The Linux test build above does **not** compile the Windows-only TUs:
 `src/main.cpp`, `src/{XInput,GameInput,RawInput,HidRead}Hook.cpp`,
 `src/OptionsOverride.cpp`, `src/GameInputWrapper*.cpp`,
 `src/HookLayer.cpp`, `src/MinHookWrapper.cpp`.
-A green Linux run says **nothing** about those files. Before pushing changes to them, verify with either:
-- Compiler Explorer MSVC (`vcpp_*_x64`, `/std:c++latest /EHsc`): inline quoted
+A green Linux run says **nothing** about those files. Before pushing changes to them, verify with:
+- Local MinGW (installed): `x86_64-w64-mingw32-g++ -std=c++20 -Wall -Wextra -Werror -c -Iinclude -I/tmp/minhook/include -I/tmp/minhook/src -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_CRT_SECURE_NO_WARNINGS [same TU list as mingw-check]` (MinHook at `/tmp/minhook`, tag `v1.3.3`).
+- Fallback: Compiler Explorer MSVC (`vcpp_*_x64`, `/std:c++latest /EHsc`): inline quoted
   project includes + upstream `MinHook.h` into one file. Note the API field
   is `userArguments`, not `userOptions`.
 - CI: `test` (Linux unit tests) + `build` (MSVC, needs `test`) +
