@@ -206,6 +206,9 @@ class XInputLayer final : public HookLayer, protected MinHookLayerMixin {
 
 XInputLayer g_layer;
 
+}  // namespace
+
+
 bool InstallXInputHooks(const Config& config) {
   return g_layer.Install(config);
 }
@@ -214,5 +217,4 @@ void RemoveXInputHooks() {
   g_layer.Remove();
 }
 
-}  // namespace
 }  // namespace crdeadzone

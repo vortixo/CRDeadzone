@@ -210,6 +210,9 @@ class HidReadLayer final : public HookLayer {
 
 HidReadLayer g_layer;
 
+}  // namespace
+
+
 bool InstallHidReadHooks(const Config& config) {
   return g_layer.Install(config);
 }
@@ -218,5 +221,4 @@ void RemoveHidReadHooks() {
   g_layer.Remove();
 }
 
-}  // namespace
 }  // namespace crdeadzone

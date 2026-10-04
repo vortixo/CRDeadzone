@@ -167,6 +167,9 @@ class GameInputLayer final : public HookLayer, protected MinHookLayerMixin {
 
 GameInputLayer g_layer;
 
+}  // namespace
+
+
 bool InstallGameInputHooks(const Config& config) {
   return g_layer.Install(config);
 }
@@ -175,5 +178,4 @@ void RemoveGameInputHooks() {
   g_layer.Remove();
 }
 
-}  // namespace
 }  // namespace crdeadzone

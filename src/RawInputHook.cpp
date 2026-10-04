@@ -135,6 +135,9 @@ class RawInputLayer final : public HookLayer, protected MinHookLayerMixin {
 
 RawInputLayer g_layer;
 
+}  // namespace
+
+
 bool InstallRawInputHooks(const Config& config) {
   return g_layer.Install(config);
 }
@@ -143,5 +146,4 @@ void RemoveRawInputHooks() {
   g_layer.Remove();
 }
 
-}  // namespace
 }  // namespace crdeadzone
