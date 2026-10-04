@@ -1,7 +1,7 @@
 #include "XInputHook.h"
 
 #include <windows.h>
-#include <XInput.h>
+#include <xinput.h>
 
 #include <mutex>
 #include <string>

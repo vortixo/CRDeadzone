@@ -70,36 +70,6 @@ jobs:
       - name: Build
         run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
 
-  # Cross-compile every translation unit (including Windows-only hook
-  # layers) with MinGW-w64. Native MSVC stays the authority; this job is
-  # the early net for syntax/brace/type errors that the portable Linux
-  # test build never sees. Uses the stub GameInput wrapper, mirroring the
-  # CMake fallback when GameInput headers are unavailable.
-  mingw-check:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Install MinGW-w64
-        run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64
-
-      - name: Fetch MinHook headers (pinned, same tag as CMake)
-        run: git clone --depth 1 --branch v1.3.3 https://github.com/TsudaKageyu/minhook.git /tmp/minhook
-
-      - name: Cross-compile all translation units
-        run: |
-          x86_64-w64-mingw32-g++ -std=c++20 -Wall -Wextra -Werror -c \
-            -Iinclude -I/tmp/minhook/include -I/tmp/minhook/src \
-            -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_CRT_SECURE_NO_WARNINGS \
-            src/main.cpp src/PatternScanner.cpp src/Disasm.cpp \
-            src/XInputHook.cpp src/GameInputHook.cpp \
-            src/GameInputWrapperStub.cpp \
-            src/RawInputHook.cpp src/HidReadHook.cpp src/HidReport.cpp \
-            src/HidMapping.cpp src/Activity.cpp src/OptionsOverride.cpp \
-            src/Config.cpp src/DeadzoneMath.cpp src/Logger.cpp \
-            src/TunableCapture.cpp src/HookLayer.cpp src/MinHookWrapper.cpp
-
       - name: Prepare release package (PowerShell)
         shell: pwsh
         run: |
@@ -135,3 +105,37 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: false
+
+  # Cross-compile every translation unit (including Windows-only hook
+  # layers) with MinGW-w64. Native MSVC stays the authority; this job is
+  # the early net for syntax/brace/type errors that the portable Linux
+  # test build never sees.
+  # - Uses the stub GameInput wrapper, mirroring the CMake fallback when
+  #   GameInput headers are unavailable.
+  # - Skips src/OptionsOverride.cpp: it uses MSVC-only SEH
+  #   (__try/__except), which MinGW GCC cannot parse. That TU stays
+  #   covered by the native MSVC build job.
+  mingw-check:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install MinGW-w64
+        run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64
+
+      - name: Fetch MinHook headers (pinned, same tag as CMake)
+        run: git clone --depth 1 --branch v1.3.3 https://github.com/TsudaKageyu/minhook.git /tmp/minhook
+
+      - name: Cross-compile all translation units
+        run: |
+          x86_64-w64-mingw32-g++ -std=c++20 -Wall -Wextra -Werror -c \
+            -Iinclude -I/tmp/minhook/include -I/tmp/minhook/src \
+            -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_CRT_SECURE_NO_WARNINGS \
+            src/main.cpp src/PatternScanner.cpp src/Disasm.cpp \
+            src/XInputHook.cpp src/GameInputHook.cpp \
+            src/GameInputWrapperStub.cpp \
+            src/RawInputHook.cpp src/HidReadHook.cpp src/HidReport.cpp \
+            src/HidMapping.cpp src/Activity.cpp \
+            src/Config.cpp src/DeadzoneMath.cpp src/Logger.cpp \
+            src/TunableCapture.cpp src/HookLayer.cpp src/MinHookWrapper.cpp
