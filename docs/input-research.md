@@ -43,6 +43,42 @@ Sources: `nondebug/dualsense` report descriptor, Linux
 `hid-playstation.c` (`struct dualsense_input_report`), VID `054C`,
 PID `0CE6` (USB).
 
+## Official + reference HID implementations
+
+No public Sony PC HID spec exists (PlayStation support pages cover
+pairing only). Closest to official, all mutually consistent:
+
+- **Linux `hid-playstation.c`** (Sony-authored, Roderick Colenbrander):
+  `DS_INPUT_REPORT_USB 0x01/64B`, `DS_INPUT_REPORT_BT 0x31/78B`,
+  `DS_FEATURE_REPORT_CALIBRATION 0x05/41B`. Common payload
+  (`struct dualsense_input_report`): sticks 0–3, triggers 4–5,
+  counter 6, buttons/hat 7–10, seq 11–14, gyro 15–20, accel 21–26,
+  timestamp 27–30. Gyro normalized to 1024 LSB/°/s, accel 8192 LSB/g;
+  per-axis bias + plus/minus from the calibration feature report, with
+  sanity checks that disable calibration on invalid data.
+- **SDL `SDL_hidapi_ps5.c`** (game-facing native-HID precedent):
+  USB `0x01` parsed at `&data[1]`; Bluetooth `0x31` parsed at `&data[2]`
+  (2-byte BT header stripped), 78B incl. trailing CRC-32. 10-byte
+  minimal BT reports carry sticks+buttons only (no gyro) — a parser
+  must size-dispatch, not assume full reports. Alternate-report and
+  enhanced-mode variants exist (`use_alternate_report`, enhanced
+  reports over BT). Same 1024/8192 scale constants.
+- **`nondebug/dualsense`**: raw + parsed USB/BT report descriptors
+  (`report-descriptor-usb.txt`, `-bluetooth.txt`); confirms the byte
+  maps above. VID `054C`, PID `0CE6`.
+- **Microsoft (official Windows path)**: register gamepad (`0x01/0x05`)
+  + joystick (`0x01/0x04`) via `RegisterRawInputDevices`, read
+  `WM_INPUT` with `GetRawInputData` (drain backlog with
+  `GetRawInputBuffer`); `HidD_GetInputReport` polls current state;
+  `ReadFile`/`WriteFile` on HID paths for reports. Xbox pads are not
+  native HID — XInput remains the correct Xbox path, HID the
+  DualSense path.
+
+Implication for this mod: the `HidRead` hook must strip 0/1/2 header
+bytes by (report ID, size) — `(0x01,64)→+1`, `(0x31,78)→+2`,
+`(0x01,10)→simple packet, sticks only` — then apply the common
+offsets. Calibration (feature `0x05`) is gyro-only scope, parked.
+
 ## Related mods (concept reference)
 
 - **SpecialK** treats input APIs as independent layers
